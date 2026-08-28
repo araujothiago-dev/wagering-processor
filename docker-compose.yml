@@ -1,0 +1,78 @@
+services:
+  postgres:
+    image: postgres:18
+    container_name: wagering-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME:-wagering}
+      POSTGRES_USER: ${DB_USER:-wagering}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-wagering}
+    ports:
+      - '5432:5432'
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${DB_USER:-wagering} -d ${DB_NAME:-wagering}']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # MiniStack (AD-11): drop-in LocalStack-compatible SQS emulator, MIT licensed, no
+  # account/token required — keeps `docker-compose up` reproducible for evaluation.
+  sqs:
+    image: ministackorg/ministack:latest
+    container_name: wagering-sqs
+    restart: unless-stopped
+    ports:
+      - '4566:4566'
+    environment:
+      MINISTACK_REGION: ${SQS_REGION:-us-east-1}
+      MINISTACK_ACCOUNT_ID: '000000000000'
+
+  # One-shot migration runner (AD-10): runs to completion before `api` accepts traffic.
+  # No table migrations exist yet in this story — the runner just proves the wiring end to end.
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: wagering-migrate
+    command: ['bun', 'run', 'migration:run']
+    environment:
+      NODE_ENV: production
+      DB_HOST: postgres
+      DB_PORT: '5432'
+      DB_USER: ${DB_USER:-wagering}
+      DB_PASSWORD: ${DB_PASSWORD:-wagering}
+      DB_NAME: ${DB_NAME:-wagering}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: wagering-api
+    command: ['bun', 'run', 'start:dev']
+    ports:
+      - '3000:3000'
+    environment:
+      NODE_ENV: development
+      PORT: '3000'
+      DB_HOST: postgres
+      DB_PORT: '5432'
+      DB_USER: ${DB_USER:-wagering}
+      DB_PASSWORD: ${DB_PASSWORD:-wagering}
+      DB_NAME: ${DB_NAME:-wagering}
+      SQS_ENDPOINT: http://sqs:4566
+      SQS_REGION: ${SQS_REGION:-us-east-1}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      sqs:
+        condition: service_started
+      migrate:
+        condition: service_completed_successfully
+
+volumes:
+  postgres_data:
