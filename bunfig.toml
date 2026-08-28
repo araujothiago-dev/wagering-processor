@@ -1,0 +1,6 @@
+[install]
+# Lockfile e' a fonte de verdade das versoes pinadas exigidas pela Architecture (Stack table).
+exact = true
+
+[test]
+root = "./src"
