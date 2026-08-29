@@ -9,8 +9,12 @@ services:
       POSTGRES_PASSWORD: ${DB_PASSWORD:-wagering}
     ports:
       - '5432:5432'
+    # postgres:18+ images expect a single mount at /var/lib/postgresql (data lives in a
+    # major-version-specific subdirectory the entrypoint manages) — mounting at the old
+    # /var/lib/postgresql/data path makes the entrypoint refuse to start
+    # (docker-library/postgres#1259).
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U ${DB_USER:-wagering} -d ${DB_NAME:-wagering}']
       interval: 5s
