@@ -4,4 +4,3 @@ dist/
 *.log
 bun-debug.log*
 coverage/
-
