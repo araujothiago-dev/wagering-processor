@@ -169,3 +169,67 @@ externo para subir localmente.
 Autenticação real (Keycloak/Zitadel), double-entry bookkeeping,
 OpenTelemetry/dashboards, teste de carga, CQRS/event sourcing completo,
 frontend.
+
+## Estado da entrega e limitações conhecidas
+
+### Implementado e verificado contra Postgres real
+- **Epic 1 completo** — `Wallet`/`WalletLedgerEntry` (domínio imutável,
+  self-validação `balanceBefore ± money == balanceAfter`), criação de wallet
+  com saldo inicial (Story 1.2), consulta de wallet e extrato paginado por
+  keyset do ledger (Story 1.3). Migration real (não só `synchronize`)
+  verificada contra o `CHECK(balance_amount >= 0)` e o revoke de
+  `UPDATE`/`DELETE` em `wallet_ledger_entries` rodando com um role não
+  superuser.
+- **Story 2.1 (submeter BET)** — lock pessimista por `walletId`
+  (`pessimistic_write` dentro de transação explícita), idempotência via
+  `UNIQUE(idempotency_key)` + insert especulativo protegido por `SAVEPOINT`
+  nomeado manualmente (nunca o savepoint automático do TypeORM),
+  `payloadHash` sobre o payload de negócio para distinguir replay de
+  conflito, outbox transacional (2 eventos no sucesso, 1 na rejeição —
+  nunca publicados fora desta story, Epic 3 cobre o publisher). Suíte de
+  integração real automatizada (`*.integration.ts`, Postgres real, `AppModule`
+  real, HTTP concorrente via `fetch`+`Promise.all`) cobre 3 dos 4 cenários
+  de concorrência do spec: duas BETs disputando o mesmo saldo, a mesma BET
+  replicada 50x em paralelo, e duas wallets distintas processadas
+  concorrentemente sem bloqueio cruzado. O 4º cenário (≥ 3 instâncias de
+  processo distintas) é procedimento manual documentado no spec da story,
+  não automatizado.
+- **Story 2.4 (consultar wager transaction)** — por id e por
+  `(providerId, externalTransactionId)`, 404 quando não existe.
+- **Story 4.2 (reconciliação)** — `POST /wallets/:walletId/reconciliation`
+  soma o ledger inteiro da wallet a partir de `"0.00"` e compara com o
+  saldo materializado; nunca corrige, só reporta divergência.
+
+### Não implementado por corte consciente de escopo (prazo)
+- **Story 2.2 (WIN/LOSS) e Story 2.3 (REFUND/ROLLBACK)** — desenho e regras
+  já completamente especificados no planejamento interno da entrega
+  (incluindo a constraint `UNIQUE(reference_transaction_id) WHERE kind IN
+  (...) AND status IN (...)` sem `kind` no índice, os dois conjuntos de
+  referência distintos por operação, e os códigos `REFERENCE_WRONG_KIND` /
+  `REFERENCE_SCOPE_MISMATCH` / `REVERSAL_WOULD_GO_NEGATIVE`). Reusariam o
+  mesmo mecanismo de lock pessimista + idempotência da Story 2.1 — a
+  decisão foi não codificar sob pressão de tempo para não introduzir um
+  bug financeiro não revisado com o mesmo rigor das stories já entregues.
+- **Epic 3 inteiro** — consumer SQS (inbox + classificação de falha
+  transitória/negócio/DLQ), publisher da outbox (`FOR UPDATE SKIP LOCKED`),
+  worker de reprocessamento de referências `PENDING_REFERENCE`. Não
+  iniciado; o schema (`outbox_messages`, colunas `attempts`/
+  `next_attempt_at`/`published_at`) já existe desde a Story 1.2 para não
+  exigir migration adicional quando isso for retomado.
+- **Autenticação** — decisão original documentada na seção "Auth" acima:
+  `AuthGuard` no-op como ponto de extensão, não vale pontos na avaliação
+  (`docs/CHALLENGE.md` §2).
+- **Observabilidade** — mínima (`/health/live`, `/health/ready`); sem
+  OpenTelemetry, métricas ou dashboards.
+
+### Ordem de implementação se houvesse mais tempo
+1. Story 2.2 (WIN/LOSS) e Story 2.3 (REFUND/ROLLBACK) — risco incremental
+   baixo sobre a Story 2.1, mesmo mecanismo de lock + idempotência já
+   provado.
+2. Publisher da outbox + consumer SQS (Epic 3) — sem isso, nenhum evento
+   sai do banco, e a entrega segue apenas HTTP síncrono.
+3. Worker de reprocessamento de referências `PENDING_REFERENCE` (poll +
+   lease + backoff exponencial, ordem de lock wallet-primeiro já definida
+   acima).
+4. Observabilidade (OpenTelemetry, dashboards, métrica de lock wait
+   duration já apontada na seção de concorrência).
