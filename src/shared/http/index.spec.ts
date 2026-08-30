@@ -59,6 +59,16 @@ describe('DomainExceptionFilter', () => {
     });
   });
 
+  it('maps WALLET_NOT_FOUND to 404', () => {
+    const { host, status, json } = buildHost();
+    filter.catch(new FakeDomainError('WALLET_NOT_FOUND', 'Wallet not found.'), host);
+
+    expect(status).toHaveBeenCalledWith(404);
+    expect(json).toHaveBeenCalledWith({
+      error: { code: 'WALLET_NOT_FOUND', message: 'Wallet not found.' },
+    });
+  });
+
   it('maps CURRENCY_MISMATCH to 422', () => {
     const { host, status, json } = buildHost();
     filter.catch(new FakeDomainError('CURRENCY_MISMATCH', 'Currency mismatch.'), host);

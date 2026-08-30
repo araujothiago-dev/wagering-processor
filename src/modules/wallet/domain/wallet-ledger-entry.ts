@@ -32,6 +32,7 @@ export class WalletLedgerEntry {
     readonly money: Money,
     readonly balanceBefore: Money,
     readonly balanceAfter: Money,
+    readonly createdAt: Date,
   ) {}
 
   static credit(params: {
@@ -56,6 +57,32 @@ export class WalletLedgerEntry {
       money,
       balanceBefore,
       balanceAfter,
+      new Date(),
+    );
+  }
+
+  // Story 1.3 — reconstructs a persisted row as-is, without re-running the `balanceBefore ±
+  // money === balanceAfter` invariant check `credit()` performs. Mirrors `Wallet.rehydrate`: a
+  // row that made it into `wallet_ledger_entries` was already validated once, at insert time.
+  static rehydrate(params: {
+    id: string;
+    walletId: string;
+    wagerTransactionId: string;
+    direction: WalletLedgerEntryDirection;
+    money: Money;
+    balanceBefore: Money;
+    balanceAfter: Money;
+    createdAt: Date;
+  }): WalletLedgerEntry {
+    return new WalletLedgerEntry(
+      params.id,
+      params.walletId,
+      params.wagerTransactionId,
+      params.direction,
+      params.money,
+      params.balanceBefore,
+      params.balanceAfter,
+      params.createdAt,
     );
   }
 }

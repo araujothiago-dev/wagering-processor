@@ -86,4 +86,62 @@ describe('WalletLedgerEntry', () => {
       expect(error).toBeInstanceOf(WalletLedgerEntryInvariantViolationError);
     });
   });
+
+  describe('rehydrate', () => {
+    it('reconstructs a persisted entry exactly, field for field', () => {
+      const createdAt = new Date('2026-01-01T00:00:00.000Z');
+
+      const entry = WalletLedgerEntry.rehydrate({
+        id: 'entry-1',
+        walletId: 'wallet-1',
+        wagerTransactionId: 'tx-1',
+        direction: 'CREDIT',
+        money: Money.of('50.00', 'USD'),
+        balanceBefore: Money.zero('USD'),
+        balanceAfter: Money.of('50.00', 'USD'),
+        createdAt,
+      });
+
+      expect(entry.id).toBe('entry-1');
+      expect(entry.walletId).toBe('wallet-1');
+      expect(entry.wagerTransactionId).toBe('tx-1');
+      expect(entry.direction).toBe('CREDIT');
+      expect(entry.money.amount).toBe('50.00');
+      expect(entry.balanceBefore.amount).toBe('0.00');
+      expect(entry.balanceAfter.amount).toBe('50.00');
+      expect(entry.createdAt).toBe(createdAt);
+    });
+
+    it('never re-runs the balanceBefore ± money === balanceAfter invariant check', () => {
+      // credit() would reject this arithmetic; rehydrate() must not — a row already made it
+      // into `wallet_ledger_entries` and is trusted as-is, same philosophy as Wallet.rehydrate.
+      const entry = WalletLedgerEntry.rehydrate({
+        id: 'entry-1',
+        walletId: 'wallet-1',
+        wagerTransactionId: 'tx-1',
+        direction: 'CREDIT',
+        money: Money.of('50.00', 'USD'),
+        balanceBefore: Money.zero('USD'),
+        balanceAfter: Money.of('40.00', 'USD'),
+        createdAt: new Date('2026-01-01T00:00:00.000Z'),
+      });
+
+      expect(entry.balanceAfter.amount).toBe('40.00');
+    });
+
+    it('reconstructs a DEBIT entry (vocabulary already declared, not produced by credit())', () => {
+      const entry = WalletLedgerEntry.rehydrate({
+        id: 'entry-1',
+        walletId: 'wallet-1',
+        wagerTransactionId: 'tx-1',
+        direction: 'DEBIT',
+        money: Money.of('10.00', 'USD'),
+        balanceBefore: Money.of('50.00', 'USD'),
+        balanceAfter: Money.of('40.00', 'USD'),
+        createdAt: new Date('2026-01-01T00:00:00.000Z'),
+      });
+
+      expect(entry.direction).toBe('DEBIT');
+    });
+  });
 });

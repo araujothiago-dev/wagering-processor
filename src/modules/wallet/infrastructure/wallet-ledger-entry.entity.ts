@@ -28,6 +28,9 @@ export class WalletLedgerEntryEntity {
   @Column({ name: 'balance_after', type: 'numeric', precision: 20, scale: 2 })
   balanceAfter!: string;
 
-  @CreateDateColumn({ name: 'created_at' })
+  // `timestamptz`, not the driver's default `timestamp` — see wallet.entity.ts for why. This is
+  // the column the keyset pagination cursor (Story 1.3) is built from, so the bug this fixes
+  // isn't cosmetic: a naive `timestamp` silently corrupts cursor comparisons off UTC.
+  @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt!: Date;
 }

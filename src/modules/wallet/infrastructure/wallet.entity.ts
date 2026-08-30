@@ -28,6 +28,9 @@ export class WalletEntity {
   @Column({ type: 'int' })
   version!: number;
 
-  @CreateDateColumn({ name: 'created_at' })
+  // `timestamptz`, not the driver's default `timestamp` — a naive `timestamp` round-trips
+  // through node-postgres as a JS `Date` shifted by the Node process's local timezone offset
+  // (Story 1.3 finding). `timestamptz` stores an absolute instant, no ambiguity either way.
+  @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt!: Date;
 }

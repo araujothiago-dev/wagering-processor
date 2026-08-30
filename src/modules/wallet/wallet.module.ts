@@ -5,11 +5,15 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { CreateWalletUseCase } from './application/create-wallet.use-case';
+import { GetWalletLedgerUseCase } from './application/get-wallet-ledger.use-case';
+import { GetWalletUseCase } from './application/get-wallet.use-case';
 import { CreateWalletTransactionalWriterImpl } from './infrastructure/create-wallet.transactional-writer';
 import { OutboxMessageEntity } from './infrastructure/outbox-message.entity';
 import { WagerTransactionEntity } from './infrastructure/wager-transaction.entity';
 import { WalletLedgerEntryEntity } from './infrastructure/wallet-ledger-entry.entity';
+import { WalletLedgerTypeOrmRepository } from './infrastructure/wallet-ledger.typeorm-repository';
 import { WalletEntity } from './infrastructure/wallet.entity';
+import { WalletTypeOrmRepository } from './infrastructure/wallet.typeorm-repository';
 import { WalletController } from './interface/wallet.controller';
 
 @Module({
@@ -24,10 +28,25 @@ import { WalletController } from './interface/wallet.controller';
   controllers: [WalletController],
   providers: [
     CreateWalletTransactionalWriterImpl,
+    WalletTypeOrmRepository,
+    WalletLedgerTypeOrmRepository,
     {
       provide: CreateWalletUseCase,
       useFactory: (writer: CreateWalletTransactionalWriterImpl) => new CreateWalletUseCase(writer),
       inject: [CreateWalletTransactionalWriterImpl],
+    },
+    {
+      provide: GetWalletUseCase,
+      useFactory: (walletRepository: WalletTypeOrmRepository) => new GetWalletUseCase(walletRepository),
+      inject: [WalletTypeOrmRepository],
+    },
+    {
+      provide: GetWalletLedgerUseCase,
+      useFactory: (
+        walletRepository: WalletTypeOrmRepository,
+        ledgerRepository: WalletLedgerTypeOrmRepository,
+      ) => new GetWalletLedgerUseCase(walletRepository, ledgerRepository),
+      inject: [WalletTypeOrmRepository, WalletLedgerTypeOrmRepository],
     },
   ],
 })

@@ -30,6 +30,7 @@ export class OutboxMessageEntity {
   @Column({ name: 'published_at', type: 'timestamptz', nullable: true })
   publishedAt!: Date | null;
 
-  @CreateDateColumn({ name: 'created_at' })
+  // `timestamptz`, not the driver's default `timestamp` — see wallet.entity.ts for why.
+  @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt!: Date;
 }

@@ -152,6 +152,13 @@ Não implementado. `AuthGuard` no-op documentado como ponto de extensão.
 - `inbox_messages`: `UNIQUE(consumer_name, message_id)`
 - `outbox_messages`: colunas `attempts`, `next_attempt_at`, `published_at`
   já desde a Story 1.2
+- toda coluna de timestamp é `timestamptz`, nunca o `timestamp` (sem timezone) que
+  `@CreateDateColumn`/`@Column` do TypeORM mapeiam por padrão quando `type` não é explícito:
+  `node-postgres` hidrata uma coluna `timestamp` como `Date` assumindo que o valor naive está no
+  timezone **local do processo Node**, não UTC — desloca todo valor lido em processos que não
+  rodam em UTC. Achado e corrigido na Story 1.3 (`created_at` das 4 tabelas da Story 1.2 estava
+  sem `type` explícito; corrompia a comparação do cursor de paginação do ledger). `timestamptz`
+  armazena um instante absoluto, sem essa ambiguidade de leitura.
 
 ## Topologia local
 `docker-compose.yml`: `api`, `postgres:18`, MiniStack (SQS), com migração

@@ -6,10 +6,10 @@
 // importing anything from here — AD-2/AD-8 forbid `shared/money`/`domain` from ever importing
 // NestJS, and this file's filter does exactly that, so the dependency can only point one way.
 //
-// Status mapping: `VALIDATION_*` → 400, `WALLET_ALREADY_EXISTS` → 409 (spec-1-2). Business-rule
-// errors that are neither malformed input nor a conflict get 422 — `CURRENCY_MISMATCH` is the
-// only one today; `INSUFFICIENT_BALANCE`/`REVERSAL_WOULD_GO_NEGATIVE` (Epic 2) follow the same
-// pattern.
+// Status mapping: `VALIDATION_*` → 400, `WALLET_ALREADY_EXISTS` → 409 (spec-1-2),
+// `WALLET_NOT_FOUND` → 404 (spec-1-3). Business-rule errors that are neither malformed input nor
+// a conflict get 422 — `CURRENCY_MISMATCH` is the only one today; `INSUFFICIENT_BALANCE`/
+// `REVERSAL_WOULD_GO_NEGATIVE` (Epic 2) follow the same pattern.
 import {
   ArgumentsHost,
   Catch,
@@ -34,6 +34,10 @@ function statusForCode(code: string): number {
 
   if (code === 'WALLET_ALREADY_EXISTS') {
     return HttpStatus.CONFLICT;
+  }
+
+  if (code === 'WALLET_NOT_FOUND') {
+    return HttpStatus.NOT_FOUND;
   }
 
   if (code === 'CURRENCY_MISMATCH') {

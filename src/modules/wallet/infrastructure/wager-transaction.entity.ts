@@ -35,6 +35,7 @@ export class WagerTransactionEntity {
   @Column({ name: 'reference_transaction_id', type: 'uuid', nullable: true })
   referenceTransactionId!: string | null;
 
-  @CreateDateColumn({ name: 'created_at' })
+  // `timestamptz`, not the driver's default `timestamp` — see wallet.entity.ts for why.
+  @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt!: Date;
 }

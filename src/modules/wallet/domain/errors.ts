@@ -18,3 +18,14 @@ export class WalletAlreadyExistsError extends Error {
     this.name = 'WalletAlreadyExistsError';
   }
 }
+
+// Story 1.3 — distinct from `VALIDATION_INVALID_WALLET_ID` (malformed request, never reaches a
+// query): this is a syntactically valid walletId that simply has no row.
+export class WalletNotFoundError extends Error {
+  readonly code = 'WALLET_NOT_FOUND' as const;
+
+  constructor(walletId: string) {
+    super(`No wallet found with id '${walletId}'.`);
+    this.name = 'WalletNotFoundError';
+  }
+}
