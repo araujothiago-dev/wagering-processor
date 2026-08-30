@@ -41,6 +41,10 @@ export interface RejectedWagerTransactionProps extends WagerTransactionBaseProps
 export interface RehydrateWagerTransactionProps extends WagerTransactionBaseProps {
   status: WagerTransactionStatus;
   failureCode?: string;
+  // Story 2.4 — always `undefined` today (only BET/OPENING exist, neither ever references
+  // another transaction); carried through so `GET /wagering/transactions/:id` already has the
+  // right shape once Story 2.3 starts setting it on REFUND/ROLLBACK rows.
+  referenceTransactionId?: string;
 }
 
 export class WagerTransaction {
@@ -58,6 +62,7 @@ export class WagerTransaction {
     readonly idempotencyKey: string,
     readonly payloadHash: string,
     readonly failureCode?: string,
+    readonly referenceTransactionId?: string,
   ) {}
 
   static processed(props: ProcessedWagerTransactionProps): WagerTransaction {
@@ -112,6 +117,7 @@ export class WagerTransaction {
       props.idempotencyKey,
       props.payloadHash,
       props.failureCode,
+      props.referenceTransactionId,
     );
   }
 

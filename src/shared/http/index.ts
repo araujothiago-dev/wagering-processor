@@ -7,9 +7,10 @@
 // NestJS, and this file's filter does exactly that, so the dependency can only point one way.
 //
 // Status mapping: `VALIDATION_*` → 400, `WALLET_ALREADY_EXISTS`/`IDEMPOTENCY_KEY_CONFLICT` → 409
-// (spec-1-2/spec-2-1), `WALLET_NOT_FOUND` → 404 (spec-1-3). Business-rule errors that are
-// neither malformed input nor a conflict get 422 — `CURRENCY_MISMATCH`/`INSUFFICIENT_BALANCE`
-// (spec-2-1) today; `REVERSAL_WOULD_GO_NEGATIVE` (Epic 2.3) follows the same pattern.
+// (spec-1-2/spec-2-1), `WALLET_NOT_FOUND`/`TRANSACTION_NOT_FOUND` → 404 (spec-1-3/spec-2-4).
+// Business-rule errors that are neither malformed input nor a conflict get 422 —
+// `CURRENCY_MISMATCH`/`INSUFFICIENT_BALANCE` (spec-2-1) today; `REVERSAL_WOULD_GO_NEGATIVE`
+// (Epic 2.3) follows the same pattern.
 import {
   ArgumentsHost,
   Catch,
@@ -36,7 +37,7 @@ function statusForCode(code: string): number {
     return HttpStatus.CONFLICT;
   }
 
-  if (code === 'WALLET_NOT_FOUND') {
+  if (code === 'WALLET_NOT_FOUND' || code === 'TRANSACTION_NOT_FOUND') {
     return HttpStatus.NOT_FOUND;
   }
 

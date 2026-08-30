@@ -7,8 +7,10 @@ import { OutboxMessageEntity } from '../wallet/infrastructure/outbox-message.ent
 import { WagerTransactionEntity } from '../wallet/infrastructure/wager-transaction.entity';
 import { WalletLedgerEntryEntity } from '../wallet/infrastructure/wallet-ledger-entry.entity';
 import { WalletEntity } from '../wallet/infrastructure/wallet.entity';
+import { GetWagerTransactionUseCase } from './application/get-wager-transaction.use-case';
 import { SubmitBetUseCase } from './application/submit-bet.use-case';
 import { SubmitBetTransactionalWriterImpl } from './infrastructure/submit-bet.transactional-writer';
+import { WagerTransactionTypeOrmRepository } from './infrastructure/wager-transaction.typeorm-repository';
 import { WageringController } from './interface/wagering.controller';
 
 @Module({
@@ -18,10 +20,16 @@ import { WageringController } from './interface/wagering.controller';
   controllers: [WageringController],
   providers: [
     SubmitBetTransactionalWriterImpl,
+    WagerTransactionTypeOrmRepository,
     {
       provide: SubmitBetUseCase,
       useFactory: (writer: SubmitBetTransactionalWriterImpl) => new SubmitBetUseCase(writer),
       inject: [SubmitBetTransactionalWriterImpl],
+    },
+    {
+      provide: GetWagerTransactionUseCase,
+      useFactory: (repository: WagerTransactionTypeOrmRepository) => new GetWagerTransactionUseCase(repository),
+      inject: [WagerTransactionTypeOrmRepository],
     },
   ],
 })

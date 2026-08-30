@@ -31,6 +31,12 @@ export interface SubmitBetOutcome {
   idempotentReplay: boolean;
 }
 
+// Story 2.4 — read-only, no lock: querying a transaction never touches balance/ledger.
+export interface WagerTransactionRepository {
+  findById(id: string): Promise<WagerTransaction | null>;
+  findByProviderAndExternalId(providerId: string, externalTransactionId: string): Promise<WagerTransaction | null>;
+}
+
 export interface SubmitBetTransactionalWriter {
   /**
    * Locks the wallet row (`SELECT ... FOR UPDATE`, blocking, no `NOWAIT`/`SKIP LOCKED`),

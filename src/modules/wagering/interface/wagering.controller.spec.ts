@@ -1,9 +1,15 @@
 import { describe, expect, it, mock } from 'bun:test';
 import { Money } from '../../../shared/money';
 import { CurrencyMismatchError, InsufficientBalanceError, WalletNotFoundError } from '../../wallet/domain/errors';
+import { GetWagerTransactionUseCase } from '../application/get-wager-transaction.use-case';
 import { SubmitBetUseCase } from '../application/submit-bet.use-case';
-import type { SubmitBetDecide, SubmitBetOutcome, SubmitBetTransactionalWriter } from '../application/ports';
-import { IdempotencyKeyConflictError } from '../domain/errors';
+import type {
+  SubmitBetDecide,
+  SubmitBetOutcome,
+  SubmitBetTransactionalWriter,
+  WagerTransactionRepository,
+} from '../application/ports';
+import { IdempotencyKeyConflictError, TransactionNotFoundError } from '../domain/errors';
 import { WagerTransaction } from '../domain/wager-transaction';
 import { WageringController, WageringRequestValidationError } from './wagering.controller';
 
@@ -24,11 +30,23 @@ const VALID_BODY = {
 
 function buildController(options?: {
   submit?: (walletId: string, decide: SubmitBetDecide) => Promise<SubmitBetOutcome>;
+  findById?: (id: string) => Promise<WagerTransaction | null>;
+  findByProviderAndExternalId?: (providerId: string, externalTransactionId: string) => Promise<WagerTransaction | null>;
 }) {
   const submit = mock(options?.submit ?? (() => Promise.reject(new Error('submit not configured'))));
   const writer: SubmitBetTransactionalWriter = { submit };
-  const controller = new WageringController(new SubmitBetUseCase(writer));
-  return { controller, submit };
+
+  const findById = mock(options?.findById ?? (() => Promise.resolve(null)));
+  const findByProviderAndExternalId = mock(
+    options?.findByProviderAndExternalId ?? (() => Promise.resolve(null)),
+  );
+  const repository: WagerTransactionRepository = { findById, findByProviderAndExternalId };
+
+  const controller = new WageringController(
+    new SubmitBetUseCase(writer),
+    new GetWagerTransactionUseCase(repository),
+  );
+  return { controller, submit, findById, findByProviderAndExternalId };
 }
 
 async function captureAsyncError(fn: () => Promise<unknown>): Promise<unknown> {
@@ -214,6 +232,93 @@ describe('WageringController', () => {
       const error = await captureAsyncError(() => controller.submit(VALID_BODY, IDEMPOTENCY_KEY));
 
       expect(error).toBeInstanceOf(IdempotencyKeyConflictError);
+    });
+  });
+
+  describe('getById', () => {
+    it('maps a found transaction to the response body', async () => {
+      const transaction = WagerTransaction.processed({
+        id: 'tx-1',
+        providerId: 'provider-a',
+        externalTransactionId: 'transaction-123',
+        playerId: 'player-1',
+        walletId: WALLET_ID,
+        roundId: 'round-987',
+        gameId: 'fortune-chimp',
+        kind: 'BET',
+        money: Money.of('25.00', 'BRL'),
+        idempotencyKey: IDEMPOTENCY_KEY,
+        payloadHash: 'hash-1',
+      });
+      const { controller, findById } = buildController({ findById: () => Promise.resolve(transaction) });
+
+      const response = await controller.getById('tx-1');
+
+      expect(findById).toHaveBeenCalledWith('tx-1');
+      expect(response).toEqual({
+        transactionId: 'tx-1',
+        status: 'PROCESSED',
+        kind: 'BET',
+        amount: '25.00',
+        currency: 'BRL',
+        referenceTransactionId: undefined,
+      });
+    });
+
+    it('propagates TransactionNotFoundError when no row matches', async () => {
+      const { controller } = buildController({ findById: () => Promise.resolve(null) });
+
+      const error = await captureAsyncError(() => controller.getById('missing-id'));
+
+      expect(error).toBeInstanceOf(TransactionNotFoundError);
+      expect((error as TransactionNotFoundError).code).toBe('TRANSACTION_NOT_FOUND');
+    });
+  });
+
+  describe('getByProviderAndExternalId', () => {
+    it('maps a found transaction to the response body', async () => {
+      const transaction = WagerTransaction.rejected({
+        id: 'tx-2',
+        providerId: 'provider-a',
+        externalTransactionId: 'transaction-456',
+        playerId: 'player-1',
+        walletId: WALLET_ID,
+        roundId: 'round-987',
+        gameId: 'fortune-chimp',
+        kind: 'BET',
+        money: Money.of('999.00', 'BRL'),
+        idempotencyKey: 'provider-a:transaction-456',
+        payloadHash: 'hash-2',
+        failureCode: 'INSUFFICIENT_BALANCE',
+      });
+      const { controller, findByProviderAndExternalId } = buildController({
+        findByProviderAndExternalId: () => Promise.resolve(transaction),
+      });
+
+      const response = await controller.getByProviderAndExternalId('provider-a', 'transaction-456');
+
+      expect(findByProviderAndExternalId).toHaveBeenCalledWith('provider-a', 'transaction-456');
+      expect(response).toEqual({
+        transactionId: 'tx-2',
+        status: 'REJECTED',
+        kind: 'BET',
+        amount: '999.00',
+        currency: 'BRL',
+        referenceTransactionId: undefined,
+      });
+    });
+
+    it('propagates TransactionNotFoundError when no row matches', async () => {
+      const { controller } = buildController({
+        findByProviderAndExternalId: () => Promise.resolve(null),
+      });
+
+      const error = await captureAsyncError(() =>
+        controller.getByProviderAndExternalId('provider-a', 'never-submitted'),
+      );
+
+      expect(error).toBeInstanceOf(TransactionNotFoundError);
+      expect((error as TransactionNotFoundError).code).toBe('TRANSACTION_NOT_FOUND');
     });
   });
 });

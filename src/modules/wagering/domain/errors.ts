@@ -13,3 +13,14 @@ export class IdempotencyKeyConflictError extends Error {
     this.name = 'IdempotencyKeyConflictError';
   }
 }
+
+// Story 2.4 — thrown for both query paths (`GET /wagering/transactions/:id` and
+// `GET /providers/:providerId/wagering/transactions/:externalId`) when no row matches.
+export class TransactionNotFoundError extends Error {
+  readonly code = 'TRANSACTION_NOT_FOUND' as const;
+
+  constructor(message: string) {
+    super(message);
+    this.name = 'TransactionNotFoundError';
+  }
+}
