@@ -13,8 +13,10 @@ import type { CreateWalletCommand } from '../application/create-wallet.use-case'
 import { CreateWalletUseCase } from '../application/create-wallet.use-case';
 import { GetWalletLedgerUseCase } from '../application/get-wallet-ledger.use-case';
 import { GetWalletUseCase } from '../application/get-wallet.use-case';
+import { ReconcileWalletUseCase } from '../application/reconcile-wallet.use-case';
 import type { Wallet } from '../domain/wallet';
 import type { WalletLedgerEntry } from '../domain/wallet-ledger-entry';
+import type { ReconciliationResult } from '../domain/reconciliation';
 
 const WALLET_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const DEFAULT_LEDGER_LIMIT = 50;
@@ -57,12 +59,21 @@ interface GetWalletLedgerResponseBody {
   nextCursor?: string;
 }
 
+interface ReconciliationResponseBody {
+  storedBalance: string;
+  calculatedBalance: string;
+  difference: string;
+  consistent: boolean;
+  checkedEntries: number;
+}
+
 @Controller('wallets')
 export class WalletController {
   constructor(
     private readonly createWalletUseCase: CreateWalletUseCase,
     private readonly getWalletUseCase: GetWalletUseCase,
     private readonly getWalletLedgerUseCase: GetWalletLedgerUseCase,
+    private readonly reconcileWalletUseCase: ReconcileWalletUseCase,
   ) {}
 
   @Post()
@@ -104,6 +115,16 @@ export class WalletController {
     };
   }
 
+  @Post(':walletId/reconciliation')
+  @HttpCode(HttpStatus.OK)
+  async reconcile(@Param('walletId') walletId: string): Promise<ReconciliationResponseBody> {
+    this.assertValidWalletId(walletId);
+
+    const result = await this.reconcileWalletUseCase.execute({ walletId });
+
+    return this.toReconciliationResponse(result);
+  }
+
   private toWalletResponse(wallet: Wallet): WalletResponseBody {
     return {
       id: wallet.id,
@@ -121,6 +142,16 @@ export class WalletController {
       balanceBefore: entry.balanceBefore.amount,
       balanceAfter: entry.balanceAfter.amount,
       createdAt: entry.createdAt.toISOString(),
+    };
+  }
+
+  private toReconciliationResponse(result: ReconciliationResult): ReconciliationResponseBody {
+    return {
+      storedBalance: result.storedBalance.amount,
+      calculatedBalance: result.calculatedBalance.amount,
+      difference: result.difference.amount,
+      consistent: result.consistent,
+      checkedEntries: result.checkedEntries,
     };
   }
 

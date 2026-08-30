@@ -70,6 +70,15 @@ export class WalletLedgerTypeOrmRepository implements WalletLedgerRepository {
     };
   }
 
+  async listAll(walletId: string, currency: string): Promise<WalletLedgerEntry[]> {
+    const rows = await this.repository.find({
+      where: { walletId },
+      order: { createdAt: 'ASC', id: 'ASC' },
+    });
+
+    return rows.map((row) => this.toDomain(row, currency));
+  }
+
   // Decoding alone isn't enough: a cursor is only valid for the wallet it was issued for. A
   // syntactically well-formed cursor minted from a different wallet's ledger must be rejected
   // the same way as an undecodable one — never silently accepted against the wrong `walletId`.

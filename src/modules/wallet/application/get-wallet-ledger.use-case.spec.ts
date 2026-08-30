@@ -24,8 +24,9 @@ function buildWalletRepository(impl?: (id: string) => Promise<Wallet | null>) {
 
 function buildLedgerRepository(impl?: (params: ListWalletLedgerParams) => Promise<ListWalletLedgerResult>) {
   const list = mock(impl ?? (() => Promise.resolve({ entries: [] })));
-  const repository: WalletLedgerRepository = { list };
-  return { repository, list };
+  const listAll = mock(() => Promise.resolve([]));
+  const repository: WalletLedgerRepository = { list, listAll };
+  return { repository, list, listAll };
 }
 
 class FakeCursorError extends Error {

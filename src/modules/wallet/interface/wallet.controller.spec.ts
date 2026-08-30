@@ -3,6 +3,7 @@ import { Money, MoneyValidationError } from '../../../shared/money';
 import { CreateWalletUseCase } from '../application/create-wallet.use-case';
 import { GetWalletLedgerUseCase } from '../application/get-wallet-ledger.use-case';
 import { GetWalletUseCase } from '../application/get-wallet.use-case';
+import { ReconcileWalletUseCase } from '../application/reconcile-wallet.use-case';
 import type {
   CreateWalletTransactionalWriter,
   CreateWalletWriteCommand,
@@ -32,6 +33,7 @@ function buildController(options?: {
   write?: (command: CreateWalletWriteCommand) => Promise<void>;
   findById?: (id: string) => Promise<Wallet | null>;
   list?: (params: ListWalletLedgerParams) => Promise<ListWalletLedgerResult>;
+  listAll?: (walletId: string, currency: string) => Promise<WalletLedgerEntry[]>;
 }) {
   const write = mock(options?.write ?? (() => Promise.resolve()));
   const writer: CreateWalletTransactionalWriter = { write };
@@ -40,15 +42,17 @@ function buildController(options?: {
   const walletRepository: WalletRepository = { findById };
 
   const list = mock(options?.list ?? (() => Promise.resolve({ entries: [] })));
-  const ledgerRepository: WalletLedgerRepository = { list };
+  const listAll = mock(options?.listAll ?? (() => Promise.resolve([])));
+  const ledgerRepository: WalletLedgerRepository = { list, listAll };
 
   const controller = new WalletController(
     new CreateWalletUseCase(writer),
     new GetWalletUseCase(walletRepository),
     new GetWalletLedgerUseCase(walletRepository, ledgerRepository),
+    new ReconcileWalletUseCase(walletRepository, ledgerRepository),
   );
 
-  return { controller, write, findById, list };
+  return { controller, write, findById, list, listAll };
 }
 
 async function captureAsyncError(fn: () => Promise<unknown>): Promise<unknown> {
@@ -298,6 +302,67 @@ describe('WalletController', () => {
       const error = await captureAsyncError(() => controller.getLedger(VALID_WALLET_ID, undefined, 'garbage'));
 
       expect(error).toBe(cursorError);
+    });
+  });
+
+  describe('reconcile — valid requests', () => {
+    it('returns the reconciliation result mapped to the exact flat response shape', async () => {
+      const entry = WalletLedgerEntry.credit({
+        walletId: VALID_WALLET_ID,
+        wagerTransactionId: 'tx-1',
+        money: Money.of('50.00', 'USD'),
+        balanceBefore: Money.zero('USD'),
+        balanceAfter: Money.of('50.00', 'USD'),
+      });
+      const { controller, listAll } = buildController({ listAll: () => Promise.resolve([entry]) });
+
+      const response = await controller.reconcile(VALID_WALLET_ID);
+
+      expect(listAll).toHaveBeenCalledWith(VALID_WALLET_ID, 'USD');
+      expect(response).toEqual({
+        storedBalance: '50.00',
+        calculatedBalance: '50.00',
+        difference: '0.00',
+        consistent: true,
+        checkedEntries: 1,
+      });
+      expect(response).not.toHaveProperty('currency');
+    });
+
+    it('reports consistent=false without correcting anything when the ledger diverges', async () => {
+      const { controller } = buildController({ listAll: () => Promise.resolve([]) });
+
+      const response = await controller.reconcile(VALID_WALLET_ID);
+
+      expect(response.consistent).toBe(false);
+      expect(response.storedBalance).toBe('50.00');
+      expect(response.calculatedBalance).toBe('0.00');
+      expect(response.difference).toBe('50.00');
+      expect(response.checkedEntries).toBe(0);
+    });
+  });
+
+  describe('reconcile — malformed walletId', () => {
+    it('rejects a non-UUID walletId as VALIDATION_INVALID_WALLET_ID without querying', async () => {
+      const { controller, findById, listAll } = buildController();
+
+      const error = await captureAsyncError(() => controller.reconcile('not-a-uuid'));
+
+      expect(error).toBeInstanceOf(WalletRequestValidationError);
+      expect((error as WalletRequestValidationError).code).toBe('VALIDATION_INVALID_WALLET_ID');
+      expect(findById).not.toHaveBeenCalled();
+      expect(listAll).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('reconcile — not found', () => {
+    it('propagates WalletNotFoundError for a well-formed walletId with no wallet', async () => {
+      const { controller, listAll } = buildController({ findById: () => Promise.resolve(null) });
+
+      const error = await captureAsyncError(() => controller.reconcile(VALID_WALLET_ID));
+
+      expect(error).toBeInstanceOf(WalletNotFoundError);
+      expect(listAll).not.toHaveBeenCalled();
     });
   });
 });

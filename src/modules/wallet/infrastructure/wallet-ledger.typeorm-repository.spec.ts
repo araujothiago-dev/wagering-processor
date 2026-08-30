@@ -62,6 +62,48 @@ function buildRepository(rows: WalletLedgerEntryEntity[]) {
 }
 
 describe('WalletLedgerTypeOrmRepository', () => {
+  describe('listAll', () => {
+    it('queries every row for the wallet ordered createdAt ASC then id ASC, with no limit', async () => {
+      const rows = [buildRow({ id: 'entry-1' }), buildRow({ id: 'entry-2' })];
+      const find = mock(() => Promise.resolve(rows));
+      const repository = { find } as unknown as Repository<WalletLedgerEntryEntity>;
+      const adapter = new WalletLedgerTypeOrmRepository(repository);
+
+      const result = await adapter.listAll('wallet-1', 'USD');
+
+      expect(find).toHaveBeenCalledWith({
+        where: { walletId: 'wallet-1' },
+        order: { createdAt: 'ASC', id: 'ASC' },
+      });
+      expect(result).toHaveLength(2);
+      expect(result.map((entry) => entry.id)).toEqual(['entry-1', 'entry-2']);
+    });
+
+    it('reconstructs each row as a WalletLedgerEntry using the given currency', async () => {
+      const row = buildRow({ direction: 'DEBIT', amount: '5.00', balanceBefore: '10.00', balanceAfter: '5.00' });
+      const find = mock(() => Promise.resolve([row]));
+      const repository = { find } as unknown as Repository<WalletLedgerEntryEntity>;
+      const adapter = new WalletLedgerTypeOrmRepository(repository);
+
+      const result = await adapter.listAll('wallet-1', 'EUR');
+
+      expect(result[0]?.direction).toBe('DEBIT');
+      expect(result[0]?.money.amount).toBe('5.00');
+      expect(result[0]?.money.currency).toBe('EUR');
+    });
+
+    it('returns an empty array when the wallet has no ledger entries', async () => {
+      const find = mock(() => Promise.resolve([]));
+      const repository = { find } as unknown as Repository<WalletLedgerEntryEntity>;
+      const adapter = new WalletLedgerTypeOrmRepository(repository);
+
+      const result = await adapter.listAll('wallet-1', 'USD');
+
+      expect(result).toEqual([]);
+    });
+  });
+
+
   describe('WHERE clause — without cursor', () => {
     it('filters by walletId only, ordered createdAt ASC then id ASC, fetching limit + 1', async () => {
       const { repository, calls } = buildRepository([buildRow()]);

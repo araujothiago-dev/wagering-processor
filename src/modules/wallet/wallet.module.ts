@@ -7,6 +7,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { CreateWalletUseCase } from './application/create-wallet.use-case';
 import { GetWalletLedgerUseCase } from './application/get-wallet-ledger.use-case';
 import { GetWalletUseCase } from './application/get-wallet.use-case';
+import { ReconcileWalletUseCase } from './application/reconcile-wallet.use-case';
 import { CreateWalletTransactionalWriterImpl } from './infrastructure/create-wallet.transactional-writer';
 import { OutboxMessageEntity } from './infrastructure/outbox-message.entity';
 import { WagerTransactionEntity } from './infrastructure/wager-transaction.entity';
@@ -46,6 +47,14 @@ import { WalletController } from './interface/wallet.controller';
         walletRepository: WalletTypeOrmRepository,
         ledgerRepository: WalletLedgerTypeOrmRepository,
       ) => new GetWalletLedgerUseCase(walletRepository, ledgerRepository),
+      inject: [WalletTypeOrmRepository, WalletLedgerTypeOrmRepository],
+    },
+    {
+      provide: ReconcileWalletUseCase,
+      useFactory: (
+        walletRepository: WalletTypeOrmRepository,
+        ledgerRepository: WalletLedgerTypeOrmRepository,
+      ) => new ReconcileWalletUseCase(walletRepository, ledgerRepository),
       inject: [WalletTypeOrmRepository, WalletLedgerTypeOrmRepository],
     },
   ],

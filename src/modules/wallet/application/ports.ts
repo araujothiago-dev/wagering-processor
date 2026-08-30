@@ -36,6 +36,11 @@ export interface ListWalletLedgerResult {
 
 export interface WalletLedgerRepository {
   list(params: ListWalletLedgerParams): Promise<ListWalletLedgerResult>;
+
+  // Story 4.2 — reconciliation needs every entry to replay the balance from scratch, not a
+  // display page. Unbounded and unpaginated on purpose: a separate concern from `list`, not a
+  // "give me all pages" loop over it.
+  listAll(walletId: string, currency: string): Promise<WalletLedgerEntry[]>;
 }
 
 export interface WalletBalanceChangedOutboxMessage {
