@@ -4,7 +4,7 @@
 // transition happens inside these classes, never in a use case or a repository.
 import { randomUUID } from 'node:crypto';
 import { Money } from '../../../shared/money';
-import { CurrencyMismatchError } from './errors';
+import { CurrencyMismatchError, InsufficientBalanceError } from './errors';
 
 export class Wallet {
   private constructor(
@@ -36,5 +36,22 @@ export class Wallet {
     if (money.currency !== this.currency) {
       throw new CurrencyMismatchError(this.currency, money.currency);
     }
+  }
+
+  // Story 2.1 — applies a `BET` debit. Immutable: returns a new `Wallet` instance with the
+  // balance decremented and `version` incremented; never mutates `this`. Currency is checked
+  // first (spec "Moeda da BET deve bater com a da wallet ... antes de qualquer débito"), then
+  // sufficiency — `InsufficientBalanceError` propagates to the caller (`SubmitBetUseCase`'s
+  // `decide` closure), which is the one place that turns it into a persisted `REJECTED`
+  // transaction instead of letting it abort the whole SQL transaction like a currency mismatch
+  // does.
+  applyDebit(money: Money): Wallet {
+    this.assertSameCurrency(money);
+
+    if (this.balance.isLessThan(money)) {
+      throw new InsufficientBalanceError(this.id, money);
+    }
+
+    return new Wallet(this.id, this.playerId, this.currency, this.balance.subtract(money), this.version + 1);
   }
 }

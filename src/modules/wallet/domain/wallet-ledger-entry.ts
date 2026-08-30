@@ -61,6 +61,34 @@ export class WalletLedgerEntry {
     );
   }
 
+  // Story 2.1 — `BET` debit. Mirrors `credit()`'s self-validation, subtracting instead of
+  // adding: `balanceBefore.subtract(money) === balanceAfter`.
+  static debit(params: {
+    walletId: string;
+    wagerTransactionId: string;
+    money: Money;
+    balanceBefore: Money;
+    balanceAfter: Money;
+  }): WalletLedgerEntry {
+    const { walletId, wagerTransactionId, money, balanceBefore, balanceAfter } = params;
+    const expectedAfter = balanceBefore.subtract(money);
+
+    if (!expectedAfter.equals(balanceAfter)) {
+      throw new WalletLedgerEntryInvariantViolationError('DEBIT', balanceBefore, money, balanceAfter);
+    }
+
+    return new WalletLedgerEntry(
+      randomUUID(),
+      walletId,
+      wagerTransactionId,
+      'DEBIT',
+      money,
+      balanceBefore,
+      balanceAfter,
+      new Date(),
+    );
+  }
+
   // Story 1.3 — reconstructs a persisted row as-is, without re-running the `balanceBefore ±
   // money === balanceAfter` invariant check `credit()` performs. Mirrors `Wallet.rehydrate`: a
   // row that made it into `wallet_ledger_entries` was already validated once, at insert time.

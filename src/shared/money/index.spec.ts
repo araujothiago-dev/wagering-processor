@@ -95,6 +95,50 @@ describe('Money', () => {
     });
   });
 
+  describe('subtract', () => {
+    it('subtracts two amounts in the same currency', () => {
+      const diff = Money.of('10.00', 'USD').subtract(Money.of('4.25', 'USD'));
+      expect(diff.amount).toBe('5.75');
+      expect(diff.currency).toBe('USD');
+    });
+
+    it('allows the result to reach exactly zero', () => {
+      const diff = Money.of('10.00', 'USD').subtract(Money.of('10.00', 'USD'));
+      expect(diff.amount).toBe('0.00');
+    });
+
+    it('rejects subtracting amounts in different currencies', () => {
+      const error = captureError(() => Money.of('10.00', 'USD').subtract(Money.of('5.00', 'EUR')));
+      expect(error).toBeInstanceOf(MoneyCurrencyMismatchError);
+      expect((error as MoneyCurrencyMismatchError).code).toBe('CURRENCY_MISMATCH');
+    });
+
+    it('rejects a subtraction that would produce a negative amount', () => {
+      const error = captureError(() => Money.of('5.00', 'USD').subtract(Money.of('10.00', 'USD')));
+      expect(error).toBeInstanceOf(MoneyValidationError);
+      expect((error as MoneyValidationError).code).toBe('VALIDATION_NEGATIVE_AMOUNT');
+    });
+  });
+
+  describe('isLessThan', () => {
+    it('is true when this amount is smaller', () => {
+      expect(Money.of('5.00', 'USD').isLessThan(Money.of('10.00', 'USD'))).toBe(true);
+    });
+
+    it('is false when this amount is equal', () => {
+      expect(Money.of('10.00', 'USD').isLessThan(Money.of('10.00', 'USD'))).toBe(false);
+    });
+
+    it('is false when this amount is larger', () => {
+      expect(Money.of('10.00', 'USD').isLessThan(Money.of('5.00', 'USD'))).toBe(false);
+    });
+
+    it('rejects comparing amounts in different currencies', () => {
+      const error = captureError(() => Money.of('5.00', 'USD').isLessThan(Money.of('10.00', 'EUR')));
+      expect(error).toBeInstanceOf(MoneyCurrencyMismatchError);
+    });
+  });
+
   describe('equals', () => {
     it('is true for the same amount and currency', () => {
       expect(Money.of('10.00', 'USD').equals(Money.of('10.00', 'USD'))).toBe(true);

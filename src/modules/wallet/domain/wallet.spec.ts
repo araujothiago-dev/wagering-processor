@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { Money, MoneyValidationError } from '../../../shared/money';
-import { CurrencyMismatchError } from './errors';
+import { CurrencyMismatchError, InsufficientBalanceError } from './errors';
 import { Wallet } from './wallet';
 
 function captureError(fn: () => unknown): unknown {
@@ -79,6 +79,87 @@ describe('Wallet', () => {
 
       expect(error).toBeInstanceOf(CurrencyMismatchError);
       expect((error as CurrencyMismatchError).code).toBe('CURRENCY_MISMATCH');
+    });
+  });
+
+  describe('applyDebit', () => {
+    it('returns a new Wallet with the balance decremented and version incremented', () => {
+      const wallet = Wallet.rehydrate({
+        id: 'wallet-1',
+        playerId: 'player-1',
+        currency: 'USD',
+        balance: Money.of('100.00', 'USD'),
+        version: 3,
+      });
+
+      const debited = wallet.applyDebit(Money.of('30.00', 'USD'));
+
+      expect(debited.balance.amount).toBe('70.00');
+      expect(debited.version).toBe(4);
+      expect(debited.id).toBe('wallet-1');
+      expect(debited).not.toBe(wallet);
+    });
+
+    it('never mutates the original wallet', () => {
+      const wallet = Wallet.rehydrate({
+        id: 'wallet-1',
+        playerId: 'player-1',
+        currency: 'USD',
+        balance: Money.of('100.00', 'USD'),
+        version: 1,
+      });
+
+      wallet.applyDebit(Money.of('30.00', 'USD'));
+
+      expect(wallet.balance.amount).toBe('100.00');
+      expect(wallet.version).toBe(1);
+    });
+
+    it('allows a debit that exactly exhausts the balance', () => {
+      const wallet = Wallet.rehydrate({
+        id: 'wallet-1',
+        playerId: 'player-1',
+        currency: 'USD',
+        balance: Money.of('50.00', 'USD'),
+        version: 1,
+      });
+
+      const debited = wallet.applyDebit(Money.of('50.00', 'USD'));
+
+      expect(debited.balance.amount).toBe('0.00');
+      expect(debited.version).toBe(2);
+    });
+
+    it('rejects a debit larger than the balance with InsufficientBalanceError', () => {
+      const wallet = Wallet.rehydrate({
+        id: 'wallet-1',
+        playerId: 'player-1',
+        currency: 'USD',
+        balance: Money.of('30.00', 'USD'),
+        version: 1,
+      });
+
+      const error = captureError(() => wallet.applyDebit(Money.of('100.00', 'USD')));
+
+      expect(error).toBeInstanceOf(InsufficientBalanceError);
+      expect((error as InsufficientBalanceError).code).toBe('INSUFFICIENT_BALANCE');
+      // Balance/version must stay untouched — a thrown error means no state change happened.
+      expect(wallet.balance.amount).toBe('30.00');
+      expect(wallet.version).toBe(1);
+    });
+
+    it('rejects a debit in a different currency with CurrencyMismatchError, before checking sufficiency', () => {
+      const wallet = Wallet.rehydrate({
+        id: 'wallet-1',
+        playerId: 'player-1',
+        currency: 'USD',
+        balance: Money.of('0.00', 'USD'),
+        version: 1,
+      });
+
+      const error = captureError(() => wallet.applyDebit(Money.of('10.00', 'EUR')));
+
+      expect(error).toBeInstanceOf(CurrencyMismatchError);
     });
   });
 });

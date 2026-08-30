@@ -82,6 +82,29 @@ export class Money {
     return new Money(this.value.plus(other.value).toDecimalPlaces(SCALE), this.currencyCode);
   }
 
+  // Story 2.1 — defense in depth (spec "Code Map"): `Wallet.applyDebit` already checks
+  // sufficiency (`isLessThan`) before ever calling this, so this guard should never actually
+  // trigger in the debit path. It exists so `subtract` is never a silent source of a negative
+  // `Money` if some other future call site forgets that check.
+  subtract(other: Money): Money {
+    this.assertSameCurrency(other);
+    const result = this.value.minus(other.value).toDecimalPlaces(SCALE);
+
+    if (result.isNegative()) {
+      throw new MoneyValidationError(
+        'VALIDATION_NEGATIVE_AMOUNT',
+        `Money subtraction would produce a negative amount: ${this.amount} - ${other.amount}.`,
+      );
+    }
+
+    return new Money(result, this.currencyCode);
+  }
+
+  isLessThan(other: Money): boolean {
+    this.assertSameCurrency(other);
+    return this.value.lessThan(other.value);
+  }
+
   equals(other: Money): boolean {
     return this.currencyCode === other.currencyCode && this.value.equals(other.value);
   }

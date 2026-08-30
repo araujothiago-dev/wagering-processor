@@ -87,6 +87,67 @@ describe('WalletLedgerEntry', () => {
     });
   });
 
+  describe('debit', () => {
+    it('records a valid DEBIT entry', () => {
+      const entry = WalletLedgerEntry.debit({
+        walletId: 'wallet-1',
+        wagerTransactionId: 'tx-1',
+        money: Money.of('30.00', 'USD'),
+        balanceBefore: Money.of('100.00', 'USD'),
+        balanceAfter: Money.of('70.00', 'USD'),
+      });
+
+      expect(entry.direction).toBe('DEBIT');
+      expect(entry.walletId).toBe('wallet-1');
+      expect(entry.wagerTransactionId).toBe('tx-1');
+      expect(entry.money.amount).toBe('30.00');
+      expect(entry.balanceBefore.amount).toBe('100.00');
+      expect(entry.balanceAfter.amount).toBe('70.00');
+      expect(typeof entry.id).toBe('string');
+      expect(entry.id.length).toBeGreaterThan(0);
+    });
+
+    it('allows a debit that exactly exhausts the balance', () => {
+      const entry = WalletLedgerEntry.debit({
+        walletId: 'wallet-1',
+        wagerTransactionId: 'tx-1',
+        money: Money.of('50.00', 'USD'),
+        balanceBefore: Money.of('50.00', 'USD'),
+        balanceAfter: Money.zero('USD'),
+      });
+
+      expect(entry.balanceAfter.amount).toBe('0.00');
+    });
+
+    it('rejects an entry whose arithmetic does not add up', () => {
+      const error = captureError(() =>
+        WalletLedgerEntry.debit({
+          walletId: 'wallet-1',
+          wagerTransactionId: 'tx-1',
+          money: Money.of('10.00', 'USD'),
+          balanceBefore: Money.of('50.00', 'USD'),
+          balanceAfter: Money.of('30.00', 'USD'),
+        }),
+      );
+
+      expect(error).toBeInstanceOf(WalletLedgerEntryInvariantViolationError);
+    });
+
+    it('rejects an entry mixing currencies between money and balanceBefore', () => {
+      const error = captureError(() =>
+        WalletLedgerEntry.debit({
+          walletId: 'wallet-1',
+          wagerTransactionId: 'tx-1',
+          money: Money.of('10.00', 'EUR'),
+          balanceBefore: Money.of('50.00', 'USD'),
+          balanceAfter: Money.of('40.00', 'USD'),
+        }),
+      );
+
+      expect(error).toBeInstanceOf(MoneyCurrencyMismatchError);
+    });
+  });
+
   describe('rehydrate', () => {
     it('reconstructs a persisted entry exactly, field for field', () => {
       const createdAt = new Date('2026-01-01T00:00:00.000Z');

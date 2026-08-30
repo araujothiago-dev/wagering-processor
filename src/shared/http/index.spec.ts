@@ -79,6 +79,26 @@ describe('DomainExceptionFilter', () => {
     });
   });
 
+  it('maps INSUFFICIENT_BALANCE to 422', () => {
+    const { host, status, json } = buildHost();
+    filter.catch(new FakeDomainError('INSUFFICIENT_BALANCE', 'Insufficient balance.'), host);
+
+    expect(status).toHaveBeenCalledWith(422);
+    expect(json).toHaveBeenCalledWith({
+      error: { code: 'INSUFFICIENT_BALANCE', message: 'Insufficient balance.' },
+    });
+  });
+
+  it('maps IDEMPOTENCY_KEY_CONFLICT to 409', () => {
+    const { host, status, json } = buildHost();
+    filter.catch(new FakeDomainError('IDEMPOTENCY_KEY_CONFLICT', 'Idempotency key conflict.'), host);
+
+    expect(status).toHaveBeenCalledWith(409);
+    expect(json).toHaveBeenCalledWith({
+      error: { code: 'IDEMPOTENCY_KEY_CONFLICT', message: 'Idempotency key conflict.' },
+    });
+  });
+
   it('maps an unknown domain error code to 500', () => {
     const { host, status, json } = buildHost();
     filter.catch(new FakeDomainError('SOMETHING_UNMAPPED', 'Unmapped.'), host);

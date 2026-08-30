@@ -5,6 +5,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { envValidationSchema } from './config/env.validation';
 import { buildTypeOrmModuleOptions } from './config/typeorm.config';
 import { HealthModule } from './health/health.module';
+import { WageringModule } from './modules/wagering/wagering.module';
 import { WalletModule } from './modules/wallet/wallet.module';
 import { DomainExceptionFilter } from './shared/http';
 
@@ -20,6 +21,7 @@ import { DomainExceptionFilter } from './shared/http';
     }),
     HealthModule,
     WalletModule,
+    WageringModule,
   ],
   providers: [
     {
