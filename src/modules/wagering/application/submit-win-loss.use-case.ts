@@ -71,7 +71,13 @@ export class SubmitWinLossUseCase {
 
     const decide: SubmitWagerDecide = (lockedWallet) => {
       if (command.kind === 'LOSS') {
-        // No balance effect (README §7) — no ledgerEntry, no wallet mutation.
+        // No balance effect (README §7) — no ledgerEntry, no wallet mutation. Currency is still
+        // checked first, same as every other kind (FR20): `Money.of` above only validates shape,
+        // never that it matches the wallet's own currency — `applyDebit`/`applyCredit` do that for
+        // BET/WIN via `assertSameCurrency`, and LOSS never calls either, so it must assert
+        // explicitly here or a currency-mismatched LOSS would silently process as PROCESSED.
+        lockedWallet.assertSameCurrency(money);
+
         return {
           transaction: WagerTransaction.processed({
             id: transactionId,

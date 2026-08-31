@@ -315,6 +315,17 @@ describe('SubmitWinLossUseCase', () => {
       expect(error).toBeInstanceOf(CurrencyMismatchError);
       expect(submit).toHaveBeenCalledTimes(1);
     });
+
+    it('propagates CurrencyMismatchError for a LOSS too', async () => {
+      const { writer, submit } = buildWriterInvokingDecide(buildWallet('100.00', 'USD'));
+      const { repository } = buildReferenceRepository();
+      const useCase = new SubmitWinLossUseCase(writer, repository);
+
+      const error = await captureAsyncError(() => useCase.execute({ ...VALID_LOSS_COMMAND, currency: 'BRL' }));
+
+      expect(error).toBeInstanceOf(CurrencyMismatchError);
+      expect(submit).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe('idempotency-key conflict', () => {

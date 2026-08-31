@@ -336,6 +336,7 @@ export class SubmitWagerTransactionalWriterImpl implements SubmitWagerTransactio
       failureCode: transaction.failureCode,
       amount: transaction.money.amount,
       currency: transaction.money.currency,
+      referenceTransactionId: transaction.referenceTransactionId,
       occurredAt: new Date().toISOString(),
     };
   }
