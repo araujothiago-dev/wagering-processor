@@ -43,7 +43,7 @@ function buildController(options?: {
   const repository: WagerTransactionRepository = { findById, findByProviderAndExternalId };
 
   const controller = new WageringController(
-    new SubmitBetUseCase(writer, repository),
+    new SubmitBetUseCase(writer),
     new GetWagerTransactionUseCase(repository),
   );
   return { controller, submit, findById, findByProviderAndExternalId };
@@ -182,55 +182,13 @@ describe('WageringController', () => {
   });
 
   describe('submit — unsupported kind', () => {
-    it('rejects a kind outside BET/WIN/LOSS as VALIDATION_UNSUPPORTED_KIND', async () => {
+    it('rejects kind !== BET as VALIDATION_UNSUPPORTED_KIND', async () => {
       const { controller, submit } = buildController();
 
-      const error = await captureAsyncError(() =>
-        controller.submit({ ...VALID_BODY, kind: 'REFUND' }, IDEMPOTENCY_KEY),
-      );
+      const error = await captureAsyncError(() => controller.submit({ ...VALID_BODY, kind: 'WIN' }, IDEMPOTENCY_KEY));
 
       expect(error).toBeInstanceOf(WageringRequestValidationError);
       expect((error as WageringRequestValidationError).code).toBe('VALIDATION_UNSUPPORTED_KIND');
-      expect(submit).not.toHaveBeenCalled();
-    });
-
-    // Story 2.2 — WIN/LOSS are now supported kinds; this asserts the controller accepts them
-    // (parsing only, not the use case's business behaviour — that's `submit-bet.use-case.spec.ts`).
-    it.each(['WIN', 'LOSS'])('accepts kind "%s" and forwards it to the use case', async (kind) => {
-      const transaction = WagerTransaction.processed({
-        id: 'tx-1',
-        providerId: 'provider-a',
-        externalTransactionId: 'transaction-123',
-        playerId: 'player-1',
-        walletId: WALLET_ID,
-        roundId: 'round-987',
-        gameId: 'fortune-chimp',
-        kind: kind as 'WIN' | 'LOSS',
-        money: Money.of('25.00', 'BRL'),
-        idempotencyKey: IDEMPOTENCY_KEY,
-        payloadHash: 'hash-1',
-      });
-      const { controller, submit } = buildController({
-        submit: () => Promise.resolve({ transaction, balanceAfter: Money.of('75.00', 'BRL'), idempotentReplay: false }),
-      });
-
-      const response = await controller.submit({ ...VALID_BODY, kind }, IDEMPOTENCY_KEY);
-
-      expect(response.status).toBe('PROCESSED');
-      expect(submit).toHaveBeenCalledTimes(1);
-    });
-  });
-
-  describe('submit — referenceExternalTransactionId only valid for WIN', () => {
-    it.each(['BET', 'LOSS'])('rejects the field on kind "%s" as VALIDATION_INVALID_REQUEST', async (kind) => {
-      const { controller, submit } = buildController();
-
-      const error = await captureAsyncError(() =>
-        controller.submit({ ...VALID_BODY, kind, referenceExternalTransactionId: 'bet-external-id' }, IDEMPOTENCY_KEY),
-      );
-
-      expect(error).toBeInstanceOf(WageringRequestValidationError);
-      expect((error as WageringRequestValidationError).code).toBe('VALIDATION_INVALID_REQUEST');
       expect(submit).not.toHaveBeenCalled();
     });
   });

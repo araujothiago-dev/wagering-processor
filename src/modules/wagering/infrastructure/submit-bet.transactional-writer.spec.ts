@@ -85,62 +85,6 @@ function buildProcessedDecision(transactionId: string, payloadHash = 'hash-1'): 
   return { transaction, wallet, ledgerEntry };
 }
 
-// Story 2.2 — a WIN that resolved its optional reference to a BET: `referenceTransactionId` must
-// survive all the way to the persisted `WagerTransactionEntity` row and the outbox payload, not
-// just the in-memory `decision.transaction` object.
-function buildWinDecisionWithReference(transactionId: string, referenceTransactionId: string, payloadHash = 'hash-win'): SubmitBetDecision {
-  const wallet = Wallet.rehydrate({
-    id: WALLET_ID,
-    playerId: 'player-1',
-    currency: 'BRL',
-    balance: Money.of('130.00', 'BRL'),
-    version: 2,
-  });
-  const ledgerEntry = WalletLedgerEntry.credit({
-    walletId: WALLET_ID,
-    wagerTransactionId: transactionId,
-    money: Money.of('30.00', 'BRL'),
-    balanceBefore: Money.of('100.00', 'BRL'),
-    balanceAfter: Money.of('130.00', 'BRL'),
-  });
-  const transaction = WagerTransaction.processed({
-    id: transactionId,
-    providerId: 'provider-a',
-    externalTransactionId: 'transaction-win-123',
-    playerId: 'player-1',
-    walletId: WALLET_ID,
-    roundId: 'round-987',
-    gameId: 'fortune-chimp',
-    kind: 'WIN',
-    money: Money.of('30.00', 'BRL'),
-    idempotencyKey: 'provider-a:transaction-win-123',
-    payloadHash,
-    referenceTransactionId,
-  });
-
-  return { transaction, wallet, ledgerEntry };
-}
-
-// Story 2.2 — LOSS decides PROCESSED without ever touching the wallet: no `wallet`/`ledgerEntry`
-// on the decision (spec "Never": no WalletLedgerEntry, no WalletBalanceChanged).
-function buildWalletUntouchedProcessedDecision(transactionId: string, payloadHash = 'hash-loss'): SubmitBetDecision {
-  const transaction = WagerTransaction.processed({
-    id: transactionId,
-    providerId: 'provider-a',
-    externalTransactionId: 'transaction-loss-123',
-    playerId: 'player-1',
-    walletId: WALLET_ID,
-    roundId: 'round-987',
-    gameId: 'fortune-chimp',
-    kind: 'LOSS',
-    money: Money.of('40.00', 'BRL'),
-    idempotencyKey: 'provider-a:transaction-loss-123',
-    payloadHash,
-  });
-
-  return { transaction };
-}
-
 function buildRejectedDecision(transactionId: string, payloadHash = 'hash-1'): SubmitBetDecision {
   const transaction = WagerTransaction.rejected({
     id: transactionId,
@@ -247,57 +191,6 @@ describe('SubmitBetTransactionalWriterImpl', () => {
     });
   });
 
-  describe('success — fresh PROCESSED insert, WIN with a resolved reference', () => {
-    it('persists referenceTransactionId on the wager_transaction row and on the WagerTransactionProcessed outbox payload', async () => {
-      const queryRunner = buildQueryRunner({
-        findOne: (entity) => (entity === WalletEntity ? Promise.resolve(buildWalletRow()) : Promise.resolve(null)),
-      });
-      const writer = new SubmitBetTransactionalWriterImpl(buildDataSource(queryRunner));
-      const decide: SubmitBetDecide = () => buildWinDecisionWithReference('tx-win-1', 'tx-bet-original');
-
-      const outcome = await writer.submit(WALLET_ID, decide);
-
-      expect(outcome.transaction.status).toBe('PROCESSED');
-      expect(outcome.transaction.referenceTransactionId).toBe('tx-bet-original');
-
-      const wagerTransactionRow = queryRunner.manager.insert.mock.calls[0]?.[1] as { referenceTransactionId: unknown };
-      expect(wagerTransactionRow.referenceTransactionId).toBe('tx-bet-original');
-
-      const outboxRows = queryRunner.manager.insert.mock.calls
-        .filter((call) => call[0] === OutboxMessageEntity)
-        .map((call) => call[1] as { payload: { type: string; referenceTransactionId?: unknown } });
-      const processedOutboxRow = outboxRows.find((row) => row.payload.type === 'WagerTransactionProcessed');
-      expect(processedOutboxRow?.payload.referenceTransactionId).toBe('tx-bet-original');
-    });
-  });
-
-  describe('success — fresh PROCESSED insert, wallet untouched (LOSS)', () => {
-    it('inserts only the wager_transaction row + 1 outbox row, no ledger/wallet update, returns the locked balance', async () => {
-      const queryRunner = buildQueryRunner({
-        findOne: (entity) => (entity === WalletEntity ? Promise.resolve(buildWalletRow()) : Promise.resolve(null)),
-      });
-      const writer = new SubmitBetTransactionalWriterImpl(buildDataSource(queryRunner));
-      const decide: SubmitBetDecide = mock((wallet) => {
-        expect(wallet.balance.amount).toBe('100.00');
-        return buildWalletUntouchedProcessedDecision('tx-loss-1');
-      });
-
-      const outcome = await writer.submit(WALLET_ID, decide);
-
-      expect(outcome.transaction.status).toBe('PROCESSED');
-      // Untouched balance — the wallet's balance as locked, never mutated.
-      expect(outcome.balanceAfter?.amount).toBe('100.00');
-      expect(outcome.idempotentReplay).toBe(false);
-
-      expect(queryRunner.manager.insert).toHaveBeenCalledTimes(2);
-      const insertedEntities = queryRunner.manager.insert.mock.calls.map((call) => call[0]);
-      expect(insertedEntities).toEqual([WagerTransactionEntity, OutboxMessageEntity]);
-      expect(queryRunner.manager.update).not.toHaveBeenCalled();
-      expect(queryRunner.commitTransaction).toHaveBeenCalledTimes(1);
-      expect(queryRunner.rollbackTransaction).not.toHaveBeenCalled();
-    });
-  });
-
   describe('rejection — fresh REJECTED insert (insufficient balance)', () => {
     it('inserts only the wager_transaction row + 1 outbox row, no ledger/wallet update, and commits', async () => {
       const queryRunner = buildQueryRunner({
@@ -385,45 +278,6 @@ describe('SubmitBetTransactionalWriterImpl', () => {
       expect(queryRunner.manager.update).not.toHaveBeenCalled();
       expect(queryRunner.query).toHaveBeenCalledWith(SAVEPOINT_SQL);
       expect(queryRunner.query).toHaveBeenCalledWith(ROLLBACK_TO_SAVEPOINT_SQL);
-      expect(queryRunner.commitTransaction).toHaveBeenCalledTimes(1);
-      expect(queryRunner.rollbackTransaction).not.toHaveBeenCalled();
-    });
-  });
-
-  describe('replay — PROCESSED, wallet untouched (LOSS)', () => {
-    it('finds no ledger row, falls back to the wallet current balance, and commits', async () => {
-      const queryRunner = buildQueryRunner({
-        findOne: (entity) => {
-          if (entity === WalletEntity) return Promise.resolve(buildWalletRow());
-          if (entity === WagerTransactionEntity) {
-            return Promise.resolve(
-              buildExistingWagerRow({
-                id: 'tx-loss-original',
-                kind: 'LOSS',
-                externalTransactionId: 'transaction-loss-123',
-                idempotencyKey: 'provider-a:transaction-loss-123',
-                amount: '40.00',
-                payloadHash: 'hash-loss',
-              }),
-            );
-          }
-          // No WalletLedgerEntryEntity row — LOSS never writes one.
-          return Promise.resolve(null);
-        },
-        insert: (entity) => (entity === WagerTransactionEntity ? Promise.reject(buildUniqueViolation()) : Promise.resolve(undefined)),
-      });
-      const writer = new SubmitBetTransactionalWriterImpl(buildDataSource(queryRunner));
-      const decide: SubmitBetDecide = () => buildWalletUntouchedProcessedDecision('tx-loss-attempt');
-
-      const outcome = await writer.submit(WALLET_ID, decide);
-
-      expect(outcome.transaction.id).toBe('tx-loss-original');
-      expect(outcome.transaction.status).toBe('PROCESSED');
-      // Falls back to the wallet's current balance — safe because LOSS never changes it.
-      expect(outcome.balanceAfter?.amount).toBe('100.00');
-      expect(outcome.idempotentReplay).toBe(true);
-
-      expect(queryRunner.manager.update).not.toHaveBeenCalled();
       expect(queryRunner.commitTransaction).toHaveBeenCalledTimes(1);
       expect(queryRunner.rollbackTransaction).not.toHaveBeenCalled();
     });

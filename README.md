@@ -86,16 +86,12 @@ bun run format       # prettier
 | `GET` | `/wallets/:walletId` | Consulta wallet |
 | `GET` | `/wallets/:walletId/ledger` | Extrato paginado (keyset) |
 | `POST` | `/wallets/:walletId/reconciliation` | Reconcilia saldo materializado vs. soma do ledger (nunca corrige, só reporta) |
-| `POST` | `/wagering/transactions` | Submete uma operação de aposta (`kind`: `BET`, `WIN` ou `LOSS`; requer header `Idempotency-Key`) |
+| `POST` | `/wagering/transactions` | Submete uma operação de aposta (`BET`; requer header `Idempotency-Key`) |
 | `GET` | `/wagering/transactions/:transactionId` | Consulta transação por id |
 | `GET` | `/providers/:providerId/wagering/transactions/:externalTransactionId` | Consulta transação por referência externa do provedor |
 | `GET` | `/health/live`, `/health/ready` | Health checks (sem autenticação) |
 
-`BET` debita o saldo; `WIN` credita (aceita opcionalmente `referenceExternalTransactionId`
-apontando pra `BET` da mesma rodada); `LOSS` só registra o resultado, sem tocar saldo/ledger.
-`REFUND`/`ROLLBACK` ainda não são aceitos (fora do escopo implementado até aqui).
-
-Exemplo de submissão de uma BET (o mesmo formato vale para `WIN`/`LOSS`, trocando `kind`):
+Exemplo de submissão de uma BET:
 
 ```sh
 curl -X POST http://localhost:3000/wagering/transactions \

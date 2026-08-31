@@ -54,13 +54,4 @@ export class Wallet {
 
     return new Wallet(this.id, this.playerId, this.currency, this.balance.subtract(money), this.version + 1);
   }
-
-  // Story 2.2 — applies a `WIN` credit. Mirrors `applyDebit`: immutable, currency-checked first
-  // via `assertSameCurrency`. No sufficiency check — a credit only ever increases the balance, so
-  // there is nothing to reject (unlike `applyDebit`, this never throws `InsufficientBalanceError`).
-  applyCredit(money: Money): Wallet {
-    this.assertSameCurrency(money);
-
-    return new Wallet(this.id, this.playerId, this.currency, this.balance.add(money), this.version + 1);
-  }
 }

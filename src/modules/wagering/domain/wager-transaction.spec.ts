@@ -29,18 +29,6 @@ describe('WagerTransaction', () => {
       expect(transaction.idempotencyKey).toBe('provider-a:transaction-123');
       expect(transaction.payloadHash).toBe('hash-1');
       expect(transaction.failureCode).toBeUndefined();
-      expect(transaction.referenceTransactionId).toBeUndefined();
-    });
-
-    // Story 2.2 — a WIN that resolved its optional reference to a BET.
-    it('carries referenceTransactionId when provided', () => {
-      const transaction = WagerTransaction.processed({
-        ...buildBaseProps(),
-        kind: 'WIN',
-        referenceTransactionId: 'tx-bet-original',
-      });
-
-      expect(transaction.referenceTransactionId).toBe('tx-bet-original');
     });
   });
 
@@ -53,21 +41,6 @@ describe('WagerTransaction', () => {
 
       expect(transaction.status).toBe('REJECTED');
       expect(transaction.failureCode).toBe('INSUFFICIENT_BALANCE');
-      expect(transaction.referenceTransactionId).toBeUndefined();
-    });
-
-    // Story 2.2 — a WIN rejected for REFERENCE_SCOPE_MISMATCH still records which row it resolved
-    // to (out of scope, but found), for audit purposes; REFERENCE_NOT_FOUND never sets it.
-    it('carries referenceTransactionId when the rejection was a scope mismatch on a resolved reference', () => {
-      const transaction = WagerTransaction.rejected({
-        ...buildBaseProps(),
-        kind: 'WIN',
-        failureCode: 'REFERENCE_SCOPE_MISMATCH',
-        referenceTransactionId: 'tx-bet-out-of-scope',
-      });
-
-      expect(transaction.failureCode).toBe('REFERENCE_SCOPE_MISMATCH');
-      expect(transaction.referenceTransactionId).toBe('tx-bet-out-of-scope');
     });
   });
 
