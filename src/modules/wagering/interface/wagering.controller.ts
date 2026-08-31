@@ -11,7 +11,7 @@
 // (`/providers/:providerId/wagering/transactions/:externalId`) lives under a completely
 // different path, not nested under it — so every route below spells out its own full path.
 import { Controller, Body, Get, Headers, HttpCode, HttpStatus, Param, Post } from '@nestjs/common';
-import type { SubmitBetCommand } from '../application/submit-bet.use-case';
+import type { SubmitBetCommand, SubmitBetKind } from '../application/submit-bet.use-case';
 import { SubmitBetUseCase } from '../application/submit-bet.use-case';
 import { GetWagerTransactionUseCase } from '../application/get-wager-transaction.use-case';
 import type { WagerTransaction } from '../domain/wager-transaction';
@@ -31,7 +31,7 @@ export class WageringRequestValidationError extends Error {
   }
 }
 
-const SUPPORTED_KIND = 'BET';
+const SUPPORTED_KINDS: readonly SubmitBetKind[] = ['BET', 'WIN', 'LOSS'];
 const REQUIRED_STRING_FIELDS = [
   'providerId',
   'externalTransactionId',
@@ -137,11 +137,30 @@ export class WageringController {
     }
 
     const kind = fields.kind as string;
-    if (kind !== SUPPORTED_KIND) {
+    if (!SUPPORTED_KINDS.includes(kind as SubmitBetKind)) {
       throw new WageringRequestValidationError(
-        `"kind" must be '${SUPPORTED_KIND}', got '${kind}'.`,
+        `"kind" must be one of ${SUPPORTED_KINDS.join(', ')}, got '${kind}'.`,
         'VALIDATION_UNSUPPORTED_KIND',
       );
+    }
+
+    // Story 2.2 — WIN-only optional metadata: absent for BET/LOSS, and optional even for WIN
+    // (spec "WIN sem referência"). When present it must be a non-empty string, same shape rule as
+    // every other request field.
+    const referenceExternalTransactionId = fields.referenceExternalTransactionId;
+    if (
+      referenceExternalTransactionId !== undefined &&
+      (typeof referenceExternalTransactionId !== 'string' || referenceExternalTransactionId.length === 0)
+    ) {
+      throw new WageringRequestValidationError('"referenceExternalTransactionId" must be a non-empty string when provided.');
+    }
+
+    // Rejected here, not silently ignored: `payload-hash.ts` hashes this field whenever present,
+    // so a BET/LOSS submitted inconsistently — sometimes with the field, sometimes without —
+    // would otherwise get a spurious 409 IDEMPOTENCY_KEY_CONFLICT on replay instead of matching
+    // the same idempotency-key's canonical payload.
+    if (kind !== 'WIN' && referenceExternalTransactionId !== undefined) {
+      throw new WageringRequestValidationError('"referenceExternalTransactionId" is only valid for kind WIN.');
     }
 
     return {
@@ -151,9 +170,11 @@ export class WageringController {
       walletId: fields.walletId as string,
       roundId: fields.roundId as string,
       gameId: fields.gameId as string,
+      kind: kind as SubmitBetKind,
       amount: fields.amount as string,
       currency: fields.currency as string,
       idempotencyKey,
+      referenceExternalTransactionId: referenceExternalTransactionId as string | undefined,
     };
   }
 }

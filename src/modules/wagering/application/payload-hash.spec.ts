@@ -59,4 +59,30 @@ describe('hashPayload', () => {
     const hash = hashPayload(buildPayload());
     expect(hash).toMatch(/^[0-9a-f]{64}$/);
   });
+
+  // Story 2.2 — WIN's optional reference is a business field: it must participate in the
+  // payload-hash so a WIN resubmitted with the same Idempotency-Key but a different
+  // `referenceExternalTransactionId` is detected as IDEMPOTENCY_KEY_CONFLICT, not a replay.
+  describe('referenceExternalTransactionId', () => {
+    it('produces the same hash whether the field is omitted or explicitly undefined', () => {
+      const omitted = buildPayload();
+      const explicitUndefined = buildPayload({ referenceExternalTransactionId: undefined });
+
+      expect(hashPayload(omitted)).toBe(hashPayload(explicitUndefined));
+    });
+
+    it('produces a different hash when present vs. absent', () => {
+      const withoutRef = buildPayload();
+      const withRef = buildPayload({ referenceExternalTransactionId: 'bet-external-id' });
+
+      expect(hashPayload(withRef)).not.toBe(hashPayload(withoutRef));
+    });
+
+    it('produces a different hash when the referenced id differs', () => {
+      const first = buildPayload({ referenceExternalTransactionId: 'bet-external-id-1' });
+      const second = buildPayload({ referenceExternalTransactionId: 'bet-external-id-2' });
+
+      expect(hashPayload(first)).not.toBe(hashPayload(second));
+    });
+  });
 });

@@ -32,10 +32,18 @@ interface WagerTransactionBaseProps {
   payloadHash: string;
 }
 
-export type ProcessedWagerTransactionProps = WagerTransactionBaseProps;
+export interface ProcessedWagerTransactionProps extends WagerTransactionBaseProps {
+  // Story 2.2 — set when a `WIN` resolved an optional reference to the `BET` of the same round;
+  // `BET`/`LOSS` never set this.
+  referenceTransactionId?: string;
+}
 
 export interface RejectedWagerTransactionProps extends WagerTransactionBaseProps {
   failureCode: string;
+  // Story 2.2 — set for a `REFERENCE_SCOPE_MISMATCH` rejection (the out-of-scope row was found,
+  // just doesn't qualify); left `undefined` for `REFERENCE_NOT_FOUND`/`INSUFFICIENT_BALANCE`
+  // (nothing resolved to reference).
+  referenceTransactionId?: string;
 }
 
 export interface RehydrateWagerTransactionProps extends WagerTransactionBaseProps {
@@ -80,6 +88,7 @@ export class WagerTransaction {
       props.idempotencyKey,
       props.payloadHash,
       undefined,
+      props.referenceTransactionId,
     );
   }
 
@@ -98,6 +107,7 @@ export class WagerTransaction {
       props.idempotencyKey,
       props.payloadHash,
       props.failureCode,
+      props.referenceTransactionId,
     );
   }
 

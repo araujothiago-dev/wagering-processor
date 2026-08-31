@@ -23,8 +23,9 @@ import { WageringController } from './interface/wagering.controller';
     WagerTransactionTypeOrmRepository,
     {
       provide: SubmitBetUseCase,
-      useFactory: (writer: SubmitBetTransactionalWriterImpl) => new SubmitBetUseCase(writer),
-      inject: [SubmitBetTransactionalWriterImpl],
+      useFactory: (writer: SubmitBetTransactionalWriterImpl, transactionRepository: WagerTransactionTypeOrmRepository) =>
+        new SubmitBetUseCase(writer, transactionRepository),
+      inject: [SubmitBetTransactionalWriterImpl, WagerTransactionTypeOrmRepository],
     },
     {
       provide: GetWagerTransactionUseCase,

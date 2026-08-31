@@ -110,7 +110,7 @@ export class SubmitBetTransactionalWriterImpl implements SubmitBetTransactionalW
         return collision.outcome;
       }
 
-      const outcome = await this.applyDecision(queryRunner, decision);
+      const outcome = await this.applyDecision(queryRunner, decision, lockedWallet);
       await queryRunner.commitTransaction();
       committed = true;
       return outcome;
@@ -124,7 +124,11 @@ export class SubmitBetTransactionalWriterImpl implements SubmitBetTransactionalW
     }
   }
 
-  private async applyDecision(queryRunner: QueryRunner, decision: SubmitBetDecision): Promise<SubmitBetOutcome> {
+  private async applyDecision(
+    queryRunner: QueryRunner,
+    decision: SubmitBetDecision,
+    lockedWallet: Wallet,
+  ): Promise<SubmitBetOutcome> {
     const { transaction, wallet, ledgerEntry } = decision;
 
     if (transaction.status === 'REJECTED') {
@@ -140,7 +144,22 @@ export class SubmitBetTransactionalWriterImpl implements SubmitBetTransactionalW
     }
 
     if (!wallet || !ledgerEntry) {
-      throw new Error('Invariant violation: a PROCESSED decision must carry wallet and ledgerEntry.');
+      // Story 2.2 — LOSS decides PROCESSED without ever touching the wallet (spec "Never": no
+      // WalletLedgerEntry, no WalletBalanceChanged) — `wallet`/`ledgerEntry` are both absent
+      // together, never just one, and only for `kind === 'LOSS'`. Only `WagerTransactionProcessed`
+      // is written; the response's balance is the wallet's untouched current balance
+      // (`lockedWallet.balance`, read under the same lock) — there is no frozen ledger
+      // `balanceAfter` to report because nothing changed.
+      //
+      // The `kind` check matters: without it, a future kind (or a bug) that forgets to set
+      // `wallet`/`ledgerEntry` on a decision that *should* touch the balance would silently be
+      // treated as a valid no-op instead of tripping the invariant error below.
+      if (wallet || ledgerEntry || transaction.kind !== 'LOSS') {
+        throw new Error('Invariant violation: a PROCESSED decision must carry both wallet and ledgerEntry, or neither (LOSS only).');
+      }
+
+      await this.insertOutbox(queryRunner, this.buildProcessedOutboxMessage(transaction));
+      return { transaction, balanceAfter: lockedWallet.balance, idempotentReplay: false };
     }
 
     await queryRunner.manager.insert(WalletLedgerEntryEntity, {
@@ -207,7 +226,36 @@ export class SubmitBetTransactionalWriterImpl implements SubmitBetTransactionalW
     });
 
     if (!ledgerRow) {
-      throw new Error(`Expected a ledger entry for PROCESSED wager_transaction '${existingRow.id}'.`);
+      // Story 2.2 — a PROCESSED transaction with no ledger entry never touched the wallet
+      // (`kind === 'LOSS'` only) — there is no frozen `balanceAfter` to replay. The wallet's
+      // *current* balance is used instead, which is safe specifically because LOSS never changes
+      // it (spec "saldo inalterado"): the wallet lock acquired at the top of `submit` is still
+      // held, so this is a consistent read within the same transaction, not a race with a
+      // concurrent writer.
+      //
+      // The `kind` check matters here too: a missing ledger row for any *other* PROCESSED kind is
+      // a genuine data-integrity bug (Story 2.1's original invariant), not a legitimate no-op —
+      // must still throw, never silently fall back to the current balance.
+      if (existingTransaction.kind !== 'LOSS') {
+        throw new Error(`Expected a ledger entry for PROCESSED wager_transaction '${existingRow.id}'.`);
+      }
+
+      const walletRow = await queryRunner.manager.findOne(WalletEntity, { where: { id: existingRow.walletId } });
+
+      if (!walletRow) {
+        // Unreachable in practice: every wager_transactions row is written in the same SQL
+        // transaction as its wallet, and wallets are never deleted.
+        throw new Error(`Invariant violation: no wallet found for wager_transaction '${existingRow.id}'.`);
+      }
+
+      return {
+        kind: 'OUTCOME',
+        outcome: {
+          transaction: existingTransaction,
+          balanceAfter: Money.of(walletRow.balanceAmount, walletCurrency),
+          idempotentReplay: true,
+        },
+      };
     }
 
     return {
@@ -228,7 +276,7 @@ export class SubmitBetTransactionalWriterImpl implements SubmitBetTransactionalW
       status: transaction.status,
       amount: transaction.money.amount,
       idempotencyKey: transaction.idempotencyKey,
-      referenceTransactionId: null,
+      referenceTransactionId: transaction.referenceTransactionId ?? null,
       providerId: transaction.providerId,
       externalTransactionId: transaction.externalTransactionId,
       playerId: transaction.playerId,
@@ -254,6 +302,7 @@ export class SubmitBetTransactionalWriterImpl implements SubmitBetTransactionalW
       idempotencyKey: row.idempotencyKey ?? '',
       payloadHash: row.payloadHash ?? '',
       failureCode: row.failureCode ?? undefined,
+      referenceTransactionId: row.referenceTransactionId ?? undefined,
     });
   }
 
@@ -285,6 +334,7 @@ export class SubmitBetTransactionalWriterImpl implements SubmitBetTransactionalW
       status: transaction.status,
       amount: transaction.money.amount,
       currency: transaction.money.currency,
+      referenceTransactionId: transaction.referenceTransactionId ?? null,
       occurredAt: new Date().toISOString(),
     };
   }
@@ -304,6 +354,7 @@ export class SubmitBetTransactionalWriterImpl implements SubmitBetTransactionalW
       failureCode: transaction.failureCode,
       amount: transaction.money.amount,
       currency: transaction.money.currency,
+      referenceTransactionId: transaction.referenceTransactionId ?? null,
       occurredAt: new Date().toISOString(),
     };
   }

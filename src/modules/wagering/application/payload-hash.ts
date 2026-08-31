@@ -18,6 +18,11 @@ export interface SubmitBetPayload {
   kind: string;
   amount: string;
   currency: string;
+  // Story 2.2 — WIN's optional reference. Always passed explicitly (even when `undefined`) by
+  // every caller of `hashPayload` so this key is always an own property of the object handed in —
+  // `canonicalize` then drops it consistently via `JSON.stringify`'s undefined-value behavior,
+  // regardless of whether the request carried the field at all.
+  referenceExternalTransactionId?: string;
 }
 
 export function hashPayload(payload: SubmitBetPayload): string {
@@ -28,7 +33,7 @@ export function hashPayload(payload: SubmitBetPayload): string {
 // serializes string-keyed properties in insertion order, so this is enough to make the output
 // independent of the input object's own key order, with no dependency on a JSON library.
 function canonicalize(payload: SubmitBetPayload): string {
-  const sorted: Record<string, string> = {};
+  const sorted: Record<string, string | undefined> = {};
 
   for (const key of Object.keys(payload).sort()) {
     sorted[key] = payload[key as keyof SubmitBetPayload];
