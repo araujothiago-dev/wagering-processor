@@ -3,13 +3,14 @@ import { Money } from '../../../shared/money';
 import { CurrencyMismatchError, InsufficientBalanceError, WalletNotFoundError } from '../../wallet/domain/errors';
 import { GetWagerTransactionUseCase } from '../application/get-wager-transaction.use-case';
 import { SubmitBetUseCase } from '../application/submit-bet.use-case';
+import { SubmitWinLossUseCase } from '../application/submit-win-loss.use-case';
 import type {
-  SubmitBetDecide,
-  SubmitBetOutcome,
-  SubmitBetTransactionalWriter,
+  SubmitWagerDecide,
+  SubmitWagerOutcome,
+  SubmitWagerTransactionalWriter,
   WagerTransactionRepository,
 } from '../application/ports';
-import { IdempotencyKeyConflictError, TransactionNotFoundError } from '../domain/errors';
+import { IdempotencyKeyConflictError, ReferenceScopeMismatchError, TransactionNotFoundError } from '../domain/errors';
 import { WagerTransaction } from '../domain/wager-transaction';
 import { WageringController, WageringRequestValidationError } from './wagering.controller';
 
@@ -29,12 +30,12 @@ const VALID_BODY = {
 };
 
 function buildController(options?: {
-  submit?: (walletId: string, decide: SubmitBetDecide) => Promise<SubmitBetOutcome>;
+  submit?: (walletId: string, decide: SubmitWagerDecide) => Promise<SubmitWagerOutcome>;
   findById?: (id: string) => Promise<WagerTransaction | null>;
   findByProviderAndExternalId?: (providerId: string, externalTransactionId: string) => Promise<WagerTransaction | null>;
 }) {
   const submit = mock(options?.submit ?? (() => Promise.reject(new Error('submit not configured'))));
-  const writer: SubmitBetTransactionalWriter = { submit };
+  const writer: SubmitWagerTransactionalWriter = { submit };
 
   const findById = mock(options?.findById ?? (() => Promise.resolve(null)));
   const findByProviderAndExternalId = mock(
@@ -44,6 +45,7 @@ function buildController(options?: {
 
   const controller = new WageringController(
     new SubmitBetUseCase(writer),
+    new SubmitWinLossUseCase(writer, repository),
     new GetWagerTransactionUseCase(repository),
   );
   return { controller, submit, findById, findByProviderAndExternalId };
@@ -182,14 +184,101 @@ describe('WageringController', () => {
   });
 
   describe('submit — unsupported kind', () => {
-    it('rejects kind !== BET as VALIDATION_UNSUPPORTED_KIND', async () => {
+    it.each(['REFUND', 'ROLLBACK', 'OPENING', 'GARBAGE'])(
+      'rejects kind=%s as VALIDATION_UNSUPPORTED_KIND (Story 2.3 scope, not yet implemented)',
+      async (kind) => {
+        const { controller, submit } = buildController();
+
+        const error = await captureAsyncError(() => controller.submit({ ...VALID_BODY, kind }, IDEMPOTENCY_KEY));
+
+        expect(error).toBeInstanceOf(WageringRequestValidationError);
+        expect((error as WageringRequestValidationError).code).toBe('VALIDATION_UNSUPPORTED_KIND');
+        expect(submit).not.toHaveBeenCalled();
+      },
+    );
+  });
+
+  describe('submit — WIN/LOSS', () => {
+    it('dispatches kind=WIN to SubmitWinLossUseCase and maps a PROCESSED outcome', async () => {
+      const transaction = WagerTransaction.processed({
+        id: 'tx-win',
+        providerId: 'provider-a',
+        externalTransactionId: 'transaction-123',
+        playerId: 'player-1',
+        walletId: WALLET_ID,
+        roundId: 'round-987',
+        gameId: 'fortune-chimp',
+        kind: 'WIN',
+        money: Money.of('25.00', 'BRL'),
+        idempotencyKey: IDEMPOTENCY_KEY,
+        payloadHash: 'hash-1',
+      });
+      const { controller, submit } = buildController({
+        submit: () => Promise.resolve({ transaction, balanceAfter: Money.of('125.00', 'BRL'), idempotentReplay: false }),
+      });
+
+      const response = await controller.submit({ ...VALID_BODY, kind: 'WIN' }, IDEMPOTENCY_KEY);
+
+      expect(response).toEqual({
+        transactionId: 'tx-win',
+        status: 'PROCESSED',
+        balance: '125.00',
+        currency: 'BRL',
+        idempotentReplay: false,
+      });
+      expect(submit).toHaveBeenCalledTimes(1);
+    });
+
+    it('dispatches kind=LOSS to SubmitWinLossUseCase and maps the unchanged balance', async () => {
+      const transaction = WagerTransaction.processed({
+        id: 'tx-loss',
+        providerId: 'provider-a',
+        externalTransactionId: 'transaction-123',
+        playerId: 'player-1',
+        walletId: WALLET_ID,
+        roundId: 'round-987',
+        gameId: 'fortune-chimp',
+        kind: 'LOSS',
+        money: Money.of('25.00', 'BRL'),
+        idempotencyKey: IDEMPOTENCY_KEY,
+        payloadHash: 'hash-1',
+      });
+      const { controller, submit } = buildController({
+        submit: () => Promise.resolve({ transaction, balanceAfter: Money.of('100.00', 'BRL'), idempotentReplay: false }),
+      });
+
+      const response = await controller.submit({ ...VALID_BODY, kind: 'LOSS' }, IDEMPOTENCY_KEY);
+
+      expect(response.status).toBe('PROCESSED');
+      expect(response.balance).toBe('100.00');
+      expect(submit).toHaveBeenCalledTimes(1);
+    });
+
+    it('rejects a non-string referenceExternalTransactionId', async () => {
       const { controller, submit } = buildController();
 
-      const error = await captureAsyncError(() => controller.submit({ ...VALID_BODY, kind: 'WIN' }, IDEMPOTENCY_KEY));
+      const error = await captureAsyncError(() =>
+        controller.submit({ ...VALID_BODY, kind: 'WIN', referenceExternalTransactionId: 42 }, IDEMPOTENCY_KEY),
+      );
 
       expect(error).toBeInstanceOf(WageringRequestValidationError);
-      expect((error as WageringRequestValidationError).code).toBe('VALIDATION_UNSUPPORTED_KIND');
       expect(submit).not.toHaveBeenCalled();
+    });
+
+    it('propagates ReferenceScopeMismatchError untouched', async () => {
+      const { controller } = buildController({
+        submit: () => Promise.reject(new ReferenceScopeMismatchError('ext-bet-1')),
+      });
+
+      const error = await captureAsyncError(() =>
+        controller.submit(
+          { ...VALID_BODY, kind: 'WIN', referenceExternalTransactionId: 'ext-bet-1' },
+          IDEMPOTENCY_KEY,
+        ),
+      );
+
+      expect(error).toBeInstanceOf(ReferenceScopeMismatchError);
+      expect((error as ReferenceScopeMismatchError).code).toBe('REFERENCE_SCOPE_MISMATCH');
     });
   });
 

@@ -162,4 +162,66 @@ describe('Wallet', () => {
       expect(error).toBeInstanceOf(CurrencyMismatchError);
     });
   });
+
+  describe('applyCredit', () => {
+    it('returns a new Wallet with the balance incremented and version incremented', () => {
+      const wallet = Wallet.rehydrate({
+        id: 'wallet-1',
+        playerId: 'player-1',
+        currency: 'USD',
+        balance: Money.of('100.00', 'USD'),
+        version: 3,
+      });
+
+      const credited = wallet.applyCredit(Money.of('30.00', 'USD'));
+
+      expect(credited.balance.amount).toBe('130.00');
+      expect(credited.version).toBe(4);
+      expect(credited.id).toBe('wallet-1');
+      expect(credited).not.toBe(wallet);
+    });
+
+    it('never mutates the original wallet', () => {
+      const wallet = Wallet.rehydrate({
+        id: 'wallet-1',
+        playerId: 'player-1',
+        currency: 'USD',
+        balance: Money.of('100.00', 'USD'),
+        version: 1,
+      });
+
+      wallet.applyCredit(Money.of('30.00', 'USD'));
+
+      expect(wallet.balance.amount).toBe('100.00');
+      expect(wallet.version).toBe(1);
+    });
+
+    it('never fails on the wallet balance itself — a credit always succeeds when currency matches', () => {
+      const wallet = Wallet.rehydrate({
+        id: 'wallet-1',
+        playerId: 'player-1',
+        currency: 'USD',
+        balance: Money.of('0.00', 'USD'),
+        version: 1,
+      });
+
+      const credited = wallet.applyCredit(Money.of('1000000.00', 'USD'));
+
+      expect(credited.balance.amount).toBe('1000000.00');
+    });
+
+    it('rejects a credit in a different currency with CurrencyMismatchError', () => {
+      const wallet = Wallet.rehydrate({
+        id: 'wallet-1',
+        playerId: 'player-1',
+        currency: 'USD',
+        balance: Money.of('0.00', 'USD'),
+        version: 1,
+      });
+
+      const error = captureError(() => wallet.applyCredit(Money.of('10.00', 'EUR')));
+
+      expect(error).toBeInstanceOf(CurrencyMismatchError);
+    });
+  });
 });

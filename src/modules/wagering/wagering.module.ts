@@ -1,6 +1,9 @@
-// `wagering` module wiring (Story 2.1). `SubmitBetUseCase` stays a plain class (AD-2: the
-// application layer never imports NestJS) so it can't carry its own `@Injectable()` — it's wired
-// here via a factory provider keyed on the class itself, same pattern as `wallet.module.ts`.
+// `wagering` module wiring (Story 2.1, widened Story 2.2). `SubmitBetUseCase`/
+// `SubmitWinLossUseCase` stay plain classes (AD-2: the application layer never imports NestJS)
+// so they can't carry their own `@Injectable()` — each is wired here via a factory provider
+// keyed on the class itself, same pattern as `wallet.module.ts`. Both share the one
+// `SubmitWagerTransactionalWriterImpl` instance — same lock+savepoint+idempotency mechanics
+// regardless of kind.
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { OutboxMessageEntity } from '../wallet/infrastructure/outbox-message.entity';
@@ -9,7 +12,8 @@ import { WalletLedgerEntryEntity } from '../wallet/infrastructure/wallet-ledger-
 import { WalletEntity } from '../wallet/infrastructure/wallet.entity';
 import { GetWagerTransactionUseCase } from './application/get-wager-transaction.use-case';
 import { SubmitBetUseCase } from './application/submit-bet.use-case';
-import { SubmitBetTransactionalWriterImpl } from './infrastructure/submit-bet.transactional-writer';
+import { SubmitWinLossUseCase } from './application/submit-win-loss.use-case';
+import { SubmitWagerTransactionalWriterImpl } from './infrastructure/submit-wager-transaction.transactional-writer';
 import { WagerTransactionTypeOrmRepository } from './infrastructure/wager-transaction.typeorm-repository';
 import { WageringController } from './interface/wagering.controller';
 
@@ -19,12 +23,18 @@ import { WageringController } from './interface/wagering.controller';
   ],
   controllers: [WageringController],
   providers: [
-    SubmitBetTransactionalWriterImpl,
+    SubmitWagerTransactionalWriterImpl,
     WagerTransactionTypeOrmRepository,
     {
       provide: SubmitBetUseCase,
-      useFactory: (writer: SubmitBetTransactionalWriterImpl) => new SubmitBetUseCase(writer),
-      inject: [SubmitBetTransactionalWriterImpl],
+      useFactory: (writer: SubmitWagerTransactionalWriterImpl) => new SubmitBetUseCase(writer),
+      inject: [SubmitWagerTransactionalWriterImpl],
+    },
+    {
+      provide: SubmitWinLossUseCase,
+      useFactory: (writer: SubmitWagerTransactionalWriterImpl, repository: WagerTransactionTypeOrmRepository) =>
+        new SubmitWinLossUseCase(writer, repository),
+      inject: [SubmitWagerTransactionalWriterImpl, WagerTransactionTypeOrmRepository],
     },
     {
       provide: GetWagerTransactionUseCase,

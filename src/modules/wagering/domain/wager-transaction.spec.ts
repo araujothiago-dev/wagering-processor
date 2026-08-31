@@ -30,6 +30,21 @@ describe('WagerTransaction', () => {
       expect(transaction.payloadHash).toBe('hash-1');
       expect(transaction.failureCode).toBeUndefined();
     });
+
+    it('carries an optional referenceTransactionId (Story 2.2 WIN referencing a BET)', () => {
+      const transaction = WagerTransaction.processed({
+        ...buildBaseProps(),
+        kind: 'WIN',
+        referenceTransactionId: 'tx-bet-original',
+      });
+
+      expect(transaction.referenceTransactionId).toBe('tx-bet-original');
+    });
+
+    it('leaves referenceTransactionId undefined when not given', () => {
+      const transaction = WagerTransaction.processed(buildBaseProps());
+      expect(transaction.referenceTransactionId).toBeUndefined();
+    });
   });
 
   describe('rejected', () => {
@@ -41,6 +56,26 @@ describe('WagerTransaction', () => {
 
       expect(transaction.status).toBe('REJECTED');
       expect(transaction.failureCode).toBe('INSUFFICIENT_BALANCE');
+    });
+
+    it('carries an optional referenceTransactionId (Story 2.2 WIN with an out-of-scope reference)', () => {
+      const transaction = WagerTransaction.rejected({
+        ...buildBaseProps(),
+        kind: 'WIN',
+        failureCode: 'REFERENCE_SCOPE_MISMATCH',
+        referenceTransactionId: 'tx-bet-out-of-scope',
+      });
+
+      expect(transaction.referenceTransactionId).toBe('tx-bet-out-of-scope');
+    });
+
+    it('leaves referenceTransactionId undefined when nothing resolved at all', () => {
+      const transaction = WagerTransaction.rejected({
+        ...buildBaseProps(),
+        failureCode: 'INSUFFICIENT_BALANCE',
+      });
+
+      expect(transaction.referenceTransactionId).toBeUndefined();
     });
   });
 
@@ -76,6 +111,18 @@ describe('WagerTransaction', () => {
     it('is false when the payloadHash differs', () => {
       const transaction = WagerTransaction.processed(buildBaseProps());
       expect(transaction.matchesPayload('hash-2')).toBe(false);
+    });
+  });
+
+  describe('affectsBalance', () => {
+    it.each(['BET', 'WIN', 'REFUND', 'ROLLBACK'] as const)('is true for kind=%s', (kind) => {
+      const transaction = WagerTransaction.processed({ ...buildBaseProps(), kind });
+      expect(transaction.affectsBalance()).toBe(true);
+    });
+
+    it('is false for kind=LOSS', () => {
+      const transaction = WagerTransaction.processed({ ...buildBaseProps(), kind: 'LOSS' });
+      expect(transaction.affectsBalance()).toBe(false);
     });
   });
 });

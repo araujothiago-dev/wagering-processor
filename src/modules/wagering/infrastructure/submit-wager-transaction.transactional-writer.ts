@@ -1,4 +1,4 @@
-// `wagering/infrastructure` — SubmitBetTransactionalWriterImpl (Story 2.1,
+// `wagering/infrastructure` — SubmitWagerTransactionalWriterImpl (Story 2.1, widened Story 2.2,
 // ARCHITECTURE.md "Concorrência" / "Idempotência").
 //
 // Explicit `QueryRunner`, never `Repository.save()`. Lock order: wallet row `SELECT ... FOR
@@ -7,6 +7,10 @@
 // named `SAVEPOINT` issued as raw SQL (`queryRunner.query('SAVEPOINT ...')` /
 // `'ROLLBACK TO SAVEPOINT ...'`) — deliberately never TypeORM's automatic nested-transaction
 // savepoint (spec "Never" / ARCHITECTURE.md "Idempotência").
+//
+// One writer for every synchronous wager kind (BET/WIN/LOSS today) — not one per kind — because
+// the lock+savepoint+idempotency mechanics are identical regardless of what `decide` computes;
+// only `applyDecision`/`handleCollision` branch on whether the decision affects the balance.
 import { randomUUID } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
@@ -22,19 +26,19 @@ import { WalletEntity } from '../../wallet/infrastructure/wallet.entity';
 import { IdempotencyKeyConflictError } from '../domain/errors';
 import { WagerTransaction } from '../domain/wager-transaction';
 import type {
-  SubmitBetDecide,
-  SubmitBetDecision,
-  SubmitBetOutcome,
-  SubmitBetTransactionalWriter,
+  SubmitWagerDecide,
+  SubmitWagerDecision,
+  SubmitWagerOutcome,
+  SubmitWagerTransactionalWriter,
 } from '../application/ports';
 
 const IDEMPOTENCY_KEY_UNIQUE_CONSTRAINT = 'UQ_wager_transactions_idempotency_key';
-const SAVEPOINT_NAME = 'submit_bet_speculative_insert';
+const SAVEPOINT_NAME = 'submit_wager_transaction_speculative_insert';
 
 // `handleCollision`'s result — `CONFLICT` carries just enough to build
 // `IdempotencyKeyConflictError` after the caller commits (see `submit`).
 type CollisionResult =
-  | { kind: 'OUTCOME'; outcome: SubmitBetOutcome }
+  | { kind: 'OUTCOME'; outcome: SubmitWagerOutcome }
   | { kind: 'CONFLICT'; idempotencyKey: string };
 
 function isIdempotencyKeyUniqueViolation(error: unknown): boolean {
@@ -47,10 +51,10 @@ function isIdempotencyKeyUniqueViolation(error: unknown): boolean {
 }
 
 @Injectable()
-export class SubmitBetTransactionalWriterImpl implements SubmitBetTransactionalWriter {
+export class SubmitWagerTransactionalWriterImpl implements SubmitWagerTransactionalWriter {
   constructor(@InjectDataSource() private readonly dataSource: DataSource) {}
 
-  async submit(walletId: string, decide: SubmitBetDecide): Promise<SubmitBetOutcome> {
+  async submit(walletId: string, decide: SubmitWagerDecide): Promise<SubmitWagerOutcome> {
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
     await queryRunner.startTransaction();
@@ -107,13 +111,13 @@ export class SubmitBetTransactionalWriterImpl implements SubmitBetTransactionalW
           throw new IdempotencyKeyConflictError(collision.idempotencyKey);
         }
 
-        return collision.outcome;
+        return this.withFallbackBalance(collision.outcome, lockedWallet.balance);
       }
 
       const outcome = await this.applyDecision(queryRunner, decision);
       await queryRunner.commitTransaction();
       committed = true;
-      return outcome;
+      return this.withFallbackBalance(outcome, lockedWallet.balance);
     } catch (error) {
       if (!committed) {
         await queryRunner.rollbackTransaction();
@@ -124,7 +128,18 @@ export class SubmitBetTransactionalWriterImpl implements SubmitBetTransactionalW
     }
   }
 
-  private async applyDecision(queryRunner: QueryRunner, decision: SubmitBetDecision): Promise<SubmitBetOutcome> {
+  // `LOSS` (and, on replay, anything `!affectsBalance()`) never gets a `balanceAfter` from
+  // `applyDecision`/`handleCollision` — there is no ledger entry to freeze one from. The wallet
+  // never moved for that kind, so the balance observed at lock time *is* the correct answer,
+  // fresh or replayed alike.
+  private withFallbackBalance(outcome: SubmitWagerOutcome, lockedWalletBalance: Money): SubmitWagerOutcome {
+    if (outcome.transaction.status === 'PROCESSED' && outcome.balanceAfter === undefined) {
+      return { ...outcome, balanceAfter: lockedWalletBalance };
+    }
+    return outcome;
+  }
+
+  private async applyDecision(queryRunner: QueryRunner, decision: SubmitWagerDecision): Promise<SubmitWagerOutcome> {
     const { transaction, wallet, ledgerEntry } = decision;
 
     if (transaction.status === 'REJECTED') {
@@ -133,14 +148,22 @@ export class SubmitBetTransactionalWriterImpl implements SubmitBetTransactionalW
     }
 
     if (transaction.status !== 'PROCESSED') {
-      // Story 2.1's `decide` callbacks only ever return PROCESSED/REJECTED — PENDING_REFERENCE/
-      // FAILED aren't producible yet (Epic 2.3/3). Fail loudly rather than silently treating an
-      // unexpected status as a REJECTED outcome once those become real.
+      // Stories 2.1/2.2's `decide` callbacks only ever return PROCESSED/REJECTED —
+      // PENDING_REFERENCE/FAILED aren't producible yet (Epic 2.3/3). Fail loudly rather than
+      // silently treating an unexpected status as a REJECTED outcome once those become real.
       throw new Error(`Unexpected non-terminal status '${transaction.status}' from decide().`);
     }
 
+    if (!wallet && !ledgerEntry) {
+      // No balance effect (`LOSS`, README §7): only the transaction row + its
+      // `WagerTransactionProcessed` event — no wallet update, no ledger entry, no
+      // `WalletBalanceChanged` event.
+      await this.insertOutbox(queryRunner, this.buildProcessedOutboxMessage(transaction));
+      return { transaction, idempotentReplay: false };
+    }
+
     if (!wallet || !ledgerEntry) {
-      throw new Error('Invariant violation: a PROCESSED decision must carry wallet and ledgerEntry.');
+      throw new Error('Invariant violation: a balance-affecting PROCESSED decision must carry both wallet and ledgerEntry.');
     }
 
     await queryRunner.manager.insert(WalletLedgerEntryEntity, {
@@ -196,10 +219,17 @@ export class SubmitBetTransactionalWriterImpl implements SubmitBetTransactionalW
     }
 
     if (existingTransaction.status !== 'PROCESSED') {
-      // Story 2.1 only ever produces PROCESSED/REJECTED — PENDING_REFERENCE/FAILED aren't
+      // Stories 2.1/2.2 only ever produce PROCESSED/REJECTED — PENDING_REFERENCE/FAILED aren't
       // reachable yet (Epic 2.3/3). Fail loudly instead of silently misreporting an unexpected
       // status as a REJECTED-shaped replay once those become real.
       throw new Error(`Unexpected non-terminal status '${existingTransaction.status}' on idempotency replay.`);
+    }
+
+    if (!existingTransaction.affectsBalance()) {
+      // `LOSS` — no ledger entry was ever written for it, so there's nothing to read a frozen
+      // `balanceAfter` from. `submit`'s `withFallbackBalance` fills it in from the still-locked
+      // wallet instead.
+      return { kind: 'OUTCOME', outcome: { transaction: existingTransaction, idempotentReplay: true } };
     }
 
     const ledgerRow = await queryRunner.manager.findOne(WalletLedgerEntryEntity, {
@@ -228,7 +258,7 @@ export class SubmitBetTransactionalWriterImpl implements SubmitBetTransactionalW
       status: transaction.status,
       amount: transaction.money.amount,
       idempotencyKey: transaction.idempotencyKey,
-      referenceTransactionId: null,
+      referenceTransactionId: transaction.referenceTransactionId ?? null,
       providerId: transaction.providerId,
       externalTransactionId: transaction.externalTransactionId,
       playerId: transaction.playerId,
@@ -254,6 +284,7 @@ export class SubmitBetTransactionalWriterImpl implements SubmitBetTransactionalW
       idempotencyKey: row.idempotencyKey ?? '',
       payloadHash: row.payloadHash ?? '',
       failureCode: row.failureCode ?? undefined,
+      referenceTransactionId: row.referenceTransactionId ?? undefined,
     });
   }
 
@@ -285,6 +316,7 @@ export class SubmitBetTransactionalWriterImpl implements SubmitBetTransactionalW
       status: transaction.status,
       amount: transaction.money.amount,
       currency: transaction.money.currency,
+      referenceTransactionId: transaction.referenceTransactionId,
       occurredAt: new Date().toISOString(),
     };
   }

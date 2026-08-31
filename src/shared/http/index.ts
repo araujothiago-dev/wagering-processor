@@ -9,8 +9,8 @@
 // Status mapping: `VALIDATION_*` → 400, `WALLET_ALREADY_EXISTS`/`IDEMPOTENCY_KEY_CONFLICT` → 409
 // (spec-1-2/spec-2-1), `WALLET_NOT_FOUND`/`TRANSACTION_NOT_FOUND` → 404 (spec-1-3/spec-2-4).
 // Business-rule errors that are neither malformed input nor a conflict get 422 —
-// `CURRENCY_MISMATCH`/`INSUFFICIENT_BALANCE` (spec-2-1) today; `REVERSAL_WOULD_GO_NEGATIVE`
-// (Epic 2.3) follows the same pattern.
+// `CURRENCY_MISMATCH`/`INSUFFICIENT_BALANCE` (spec-2-1), `REFERENCE_SCOPE_MISMATCH` (spec-2-2);
+// `REVERSAL_WOULD_GO_NEGATIVE`/`REFERENCE_WRONG_KIND` (Epic 2.3) follow the same pattern.
 import {
   ArgumentsHost,
   Catch,
@@ -41,7 +41,11 @@ function statusForCode(code: string): number {
     return HttpStatus.NOT_FOUND;
   }
 
-  if (code === 'CURRENCY_MISMATCH' || code === 'INSUFFICIENT_BALANCE') {
+  if (
+    code === 'CURRENCY_MISMATCH' ||
+    code === 'INSUFFICIENT_BALANCE' ||
+    code === 'REFERENCE_SCOPE_MISMATCH'
+  ) {
     return HttpStatus.UNPROCESSABLE_ENTITY;
   }
 

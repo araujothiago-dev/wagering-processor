@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test';
-import { hashPayload, type SubmitBetPayload } from './payload-hash';
+import { hashPayload, type SubmitWagerPayload } from './payload-hash';
 
-function buildPayload(overrides?: Partial<SubmitBetPayload>): SubmitBetPayload {
+function buildPayload(overrides?: Partial<SubmitWagerPayload>): SubmitWagerPayload {
   return {
     providerId: 'provider-a',
     externalTransactionId: 'transaction-123',
@@ -19,7 +19,7 @@ function buildPayload(overrides?: Partial<SubmitBetPayload>): SubmitBetPayload {
 describe('hashPayload', () => {
   it('produces the same hash regardless of key order', () => {
     const payload = buildPayload();
-    const reordered: SubmitBetPayload = {
+    const reordered: SubmitWagerPayload = {
       currency: payload.currency,
       amount: payload.amount,
       kind: payload.kind,
@@ -50,7 +50,7 @@ describe('hashPayload', () => {
     ['currency', 'USD'],
   ] as const)('produces a different hash when %s differs', (field, value) => {
     const base = buildPayload();
-    const changed = buildPayload({ [field]: value } as Partial<SubmitBetPayload>);
+    const changed = buildPayload({ [field]: value } as Partial<SubmitWagerPayload>);
 
     expect(hashPayload(changed)).not.toBe(hashPayload(base));
   });
@@ -58,5 +58,28 @@ describe('hashPayload', () => {
   it('is a 64-character lowercase hex sha256 digest', () => {
     const hash = hashPayload(buildPayload());
     expect(hash).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  describe('referenceExternalTransactionId (Story 2.2)', () => {
+    it('hashes identically whether the field is omitted or explicitly undefined', () => {
+      const omitted = hashPayload(buildPayload());
+      const explicit = hashPayload({ ...buildPayload(), referenceExternalTransactionId: undefined });
+
+      expect(explicit).toBe(omitted);
+    });
+
+    it('produces a different hash when a reference is present vs. absent', () => {
+      const withoutReference = hashPayload(buildPayload());
+      const withReference = hashPayload({ ...buildPayload(), referenceExternalTransactionId: 'ext-bet-1' });
+
+      expect(withReference).not.toBe(withoutReference);
+    });
+
+    it('produces a different hash when the reference itself differs', () => {
+      const first = hashPayload({ ...buildPayload(), referenceExternalTransactionId: 'ext-bet-1' });
+      const second = hashPayload({ ...buildPayload(), referenceExternalTransactionId: 'ext-bet-2' });
+
+      expect(first).not.toBe(second);
+    });
   });
 });

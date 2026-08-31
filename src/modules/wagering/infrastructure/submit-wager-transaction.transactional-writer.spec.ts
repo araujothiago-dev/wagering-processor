@@ -10,12 +10,12 @@ import { WalletLedgerEntryEntity } from '../../wallet/infrastructure/wallet-ledg
 import { WalletEntity } from '../../wallet/infrastructure/wallet.entity';
 import { IdempotencyKeyConflictError } from '../domain/errors';
 import { WagerTransaction } from '../domain/wager-transaction';
-import type { SubmitBetDecide, SubmitBetDecision } from '../application/ports';
-import { SubmitBetTransactionalWriterImpl } from './submit-bet.transactional-writer';
+import type { SubmitWagerDecide, SubmitWagerDecision } from '../application/ports';
+import { SubmitWagerTransactionalWriterImpl } from './submit-wager-transaction.transactional-writer';
 
 const WALLET_ID = 'wallet-1';
-const SAVEPOINT_SQL = 'SAVEPOINT submit_bet_speculative_insert';
-const ROLLBACK_TO_SAVEPOINT_SQL = 'ROLLBACK TO SAVEPOINT submit_bet_speculative_insert';
+const SAVEPOINT_SQL = 'SAVEPOINT submit_wager_transaction_speculative_insert';
+const ROLLBACK_TO_SAVEPOINT_SQL = 'ROLLBACK TO SAVEPOINT submit_wager_transaction_speculative_insert';
 
 function buildWalletRow() {
   return { id: WALLET_ID, playerId: 'player-1', currency: 'BRL', balanceAmount: '100.00', version: 1 };
@@ -53,7 +53,7 @@ function buildUniqueViolation(): QueryFailedError {
   } as unknown as Error);
 }
 
-function buildProcessedDecision(transactionId: string, payloadHash = 'hash-1'): SubmitBetDecision {
+function buildProcessedDecision(transactionId: string, payloadHash = 'hash-1'): SubmitWagerDecision {
   const wallet = Wallet.rehydrate({
     id: WALLET_ID,
     playerId: 'player-1',
@@ -85,7 +85,26 @@ function buildProcessedDecision(transactionId: string, payloadHash = 'hash-1'): 
   return { transaction, wallet, ledgerEntry };
 }
 
-function buildRejectedDecision(transactionId: string, payloadHash = 'hash-1'): SubmitBetDecision {
+function buildLossDecision(transactionId: string, payloadHash = 'hash-1'): SubmitWagerDecision {
+  const transaction = WagerTransaction.processed({
+    id: transactionId,
+    providerId: 'provider-a',
+    externalTransactionId: 'transaction-123',
+    playerId: 'player-1',
+    walletId: WALLET_ID,
+    roundId: 'round-987',
+    gameId: 'fortune-chimp',
+    kind: 'LOSS',
+    money: Money.of('30.00', 'BRL'),
+    idempotencyKey: 'provider-a:transaction-123',
+    payloadHash,
+  });
+
+  // No `wallet`/`ledgerEntry` — LOSS never affects the balance (README §7).
+  return { transaction };
+}
+
+function buildRejectedDecision(transactionId: string, payloadHash = 'hash-1'): SubmitWagerDecision {
   const transaction = WagerTransaction.rejected({
     id: transactionId,
     providerId: 'provider-a',
@@ -136,14 +155,14 @@ const EXISTING_LEDGER_ROW = {
   createdAt: new Date('2026-01-01T00:00:00.000Z'),
 };
 
-describe('SubmitBetTransactionalWriterImpl', () => {
+describe('SubmitWagerTransactionalWriterImpl', () => {
   describe('success — fresh PROCESSED insert', () => {
     it('locks the wallet, inserts ledger + 2 outbox rows, updates the wallet, and commits', async () => {
       const queryRunner = buildQueryRunner({
         findOne: (entity) => (entity === WalletEntity ? Promise.resolve(buildWalletRow()) : Promise.resolve(null)),
       });
-      const writer = new SubmitBetTransactionalWriterImpl(buildDataSource(queryRunner));
-      const decide: SubmitBetDecide = mock((wallet) => {
+      const writer = new SubmitWagerTransactionalWriterImpl(buildDataSource(queryRunner));
+      const decide: SubmitWagerDecide = mock((wallet) => {
         expect(wallet.balance.amount).toBe('100.00');
         return buildProcessedDecision('tx-1');
       });
@@ -196,8 +215,8 @@ describe('SubmitBetTransactionalWriterImpl', () => {
       const queryRunner = buildQueryRunner({
         findOne: (entity) => (entity === WalletEntity ? Promise.resolve(buildWalletRow()) : Promise.resolve(null)),
       });
-      const writer = new SubmitBetTransactionalWriterImpl(buildDataSource(queryRunner));
-      const decide: SubmitBetDecide = () => buildRejectedDecision('tx-2');
+      const writer = new SubmitWagerTransactionalWriterImpl(buildDataSource(queryRunner));
+      const decide: SubmitWagerDecide = () => buildRejectedDecision('tx-2');
 
       const outcome = await writer.submit(WALLET_ID, decide);
 
@@ -214,11 +233,35 @@ describe('SubmitBetTransactionalWriterImpl', () => {
     });
   });
 
+  describe('success — fresh PROCESSED insert, no balance effect (LOSS)', () => {
+    it('inserts only the wager_transaction row + 1 outbox row, reports the unchanged locked balance', async () => {
+      const queryRunner = buildQueryRunner({
+        findOne: (entity) => (entity === WalletEntity ? Promise.resolve(buildWalletRow()) : Promise.resolve(null)),
+      });
+      const writer = new SubmitWagerTransactionalWriterImpl(buildDataSource(queryRunner));
+      const decide: SubmitWagerDecide = () => buildLossDecision('tx-loss');
+
+      const outcome = await writer.submit(WALLET_ID, decide);
+
+      expect(outcome.transaction.status).toBe('PROCESSED');
+      // Never moved — the fallback reports the wallet's balance at lock time (100.00), not "0.00"
+      // or undefined.
+      expect(outcome.balanceAfter?.amount).toBe('100.00');
+      expect(outcome.idempotentReplay).toBe(false);
+
+      expect(queryRunner.manager.insert).toHaveBeenCalledTimes(2);
+      const insertedEntities = queryRunner.manager.insert.mock.calls.map((call) => call[0]);
+      expect(insertedEntities).toEqual([WagerTransactionEntity, OutboxMessageEntity]);
+      expect(queryRunner.manager.update).not.toHaveBeenCalled();
+      expect(queryRunner.commitTransaction).toHaveBeenCalledTimes(1);
+    });
+  });
+
   describe('wallet not found', () => {
     it('throws WalletNotFoundError without invoking decide, and rolls back', async () => {
       const queryRunner = buildQueryRunner({ findOne: () => Promise.resolve(null) });
-      const writer = new SubmitBetTransactionalWriterImpl(buildDataSource(queryRunner));
-      const decide = mock((): SubmitBetDecision => {
+      const writer = new SubmitWagerTransactionalWriterImpl(buildDataSource(queryRunner));
+      const decide = mock((): SubmitWagerDecision => {
         throw new Error('decide must not be called when the wallet does not exist');
       });
 
@@ -237,8 +280,8 @@ describe('SubmitBetTransactionalWriterImpl', () => {
       const queryRunner = buildQueryRunner({
         findOne: (entity) => (entity === WalletEntity ? Promise.resolve(buildWalletRow()) : Promise.resolve(null)),
       });
-      const writer = new SubmitBetTransactionalWriterImpl(buildDataSource(queryRunner));
-      const decide: SubmitBetDecide = () => {
+      const writer = new SubmitWagerTransactionalWriterImpl(buildDataSource(queryRunner));
+      const decide: SubmitWagerDecide = () => {
         throw new FakeCurrencyMismatchError('currency mismatch');
       };
 
@@ -262,8 +305,8 @@ describe('SubmitBetTransactionalWriterImpl', () => {
         },
         insert: (entity) => (entity === WagerTransactionEntity ? Promise.reject(buildUniqueViolation()) : Promise.resolve(undefined)),
       });
-      const writer = new SubmitBetTransactionalWriterImpl(buildDataSource(queryRunner));
-      const decide: SubmitBetDecide = () => buildProcessedDecision('tx-attempt');
+      const writer = new SubmitWagerTransactionalWriterImpl(buildDataSource(queryRunner));
+      const decide: SubmitWagerDecide = () => buildProcessedDecision('tx-attempt');
 
       const outcome = await writer.submit(WALLET_ID, decide);
 
@@ -283,6 +326,35 @@ describe('SubmitBetTransactionalWriterImpl', () => {
     });
   });
 
+  describe('replay — PROCESSED, no balance effect (LOSS)', () => {
+    it('never looks up a ledger entry, reports the unchanged locked balance', async () => {
+      const queryRunner = buildQueryRunner({
+        findOne: (entity) => {
+          if (entity === WalletEntity) return Promise.resolve(buildWalletRow());
+          if (entity === WagerTransactionEntity) return Promise.resolve(buildExistingWagerRow({ kind: 'LOSS' }));
+          return Promise.resolve(null);
+        },
+        insert: (entity) => (entity === WagerTransactionEntity ? Promise.reject(buildUniqueViolation()) : Promise.resolve(undefined)),
+      });
+      const writer = new SubmitWagerTransactionalWriterImpl(buildDataSource(queryRunner));
+      const decide: SubmitWagerDecide = () => buildLossDecision('tx-attempt');
+
+      const outcome = await writer.submit(WALLET_ID, decide);
+
+      expect(outcome.transaction.id).toBe('tx-original');
+      expect(outcome.transaction.status).toBe('PROCESSED');
+      // No ledger row ever existed for a LOSS — the fallback reports the locked wallet's
+      // balance, unaffected either way.
+      expect(outcome.balanceAfter?.amount).toBe('100.00');
+      expect(outcome.idempotentReplay).toBe(true);
+
+      const findOneEntities = queryRunner.manager.findOne.mock.calls.map((call) => call[0]);
+      expect(findOneEntities).not.toContain(WalletLedgerEntryEntity);
+      expect(queryRunner.manager.update).not.toHaveBeenCalled();
+      expect(queryRunner.commitTransaction).toHaveBeenCalledTimes(1);
+    });
+  });
+
   describe('replay — REJECTED', () => {
     it('never looks up a ledger entry and returns no balanceAfter', async () => {
       const queryRunner = buildQueryRunner({
@@ -295,8 +367,8 @@ describe('SubmitBetTransactionalWriterImpl', () => {
         },
         insert: (entity) => (entity === WagerTransactionEntity ? Promise.reject(buildUniqueViolation()) : Promise.resolve(undefined)),
       });
-      const writer = new SubmitBetTransactionalWriterImpl(buildDataSource(queryRunner));
-      const decide: SubmitBetDecide = () => buildRejectedDecision('tx-attempt');
+      const writer = new SubmitWagerTransactionalWriterImpl(buildDataSource(queryRunner));
+      const decide: SubmitWagerDecide = () => buildRejectedDecision('tx-attempt');
 
       const outcome = await writer.submit(WALLET_ID, decide);
 
@@ -321,9 +393,9 @@ describe('SubmitBetTransactionalWriterImpl', () => {
         },
         insert: (entity) => (entity === WagerTransactionEntity ? Promise.reject(buildUniqueViolation()) : Promise.resolve(undefined)),
       });
-      const writer = new SubmitBetTransactionalWriterImpl(buildDataSource(queryRunner));
+      const writer = new SubmitWagerTransactionalWriterImpl(buildDataSource(queryRunner));
       // Different payloadHash than the existing row ('hash-1') => conflict, not replay.
-      const decide: SubmitBetDecide = () => buildProcessedDecision('tx-attempt', 'hash-DIFFERENT');
+      const decide: SubmitWagerDecide = () => buildProcessedDecision('tx-attempt', 'hash-DIFFERENT');
 
       await expect(writer.submit(WALLET_ID, decide)).rejects.toBeInstanceOf(IdempotencyKeyConflictError);
 

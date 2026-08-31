@@ -196,20 +196,42 @@ frontend.
   não automatizado.
 - **Story 2.4 (consultar wager transaction)** — por id e por
   `(providerId, externalTransactionId)`, 404 quando não existe.
+- **Story 2.2 (submeter WIN e LOSS)** — reusa o mesmo
+  `SubmitWagerTransactionalWriterImpl`/lock pessimista/`SAVEPOINT` nomeado/
+  `payloadHash` da Story 2.1 (generalizado para aceitar uma decisão sem
+  efeito de saldo — `LOSS` não gera `WalletLedgerEntry` nem evento
+  `WalletBalanceChanged`, só o `WagerTransactionProcessed`). WIN aceita uma
+  referência opcional a uma BET `PROCESSED` da mesma
+  provider/player/wallet/moeda/rodada (`REFERENCE_SCOPE_MISMATCH` — 422 —
+  cobre não encontrada, tipo errado ou escopo errado, uma única checagem
+  para esta story). Referência inválida gera uma linha `REJECTED` **comitada**
+  dentro do mesmo lock — mesmo padrão já usado por `INSUFFICIENT_BALANCE`
+  em 2.1 (auditável e coberta por replay idempotente, não uma exceção
+  lançada antes de tocar o banco). Verificado contra Postgres real: fluxo
+  BET→WIN→LOSS completo, replay de WIN e de LOSS via a mesma idempotency
+  key (inclusive o caminho de replay sem lançamento de ledger, o mais
+  delicado da generalização), rejeição de referência de outra rodada, e
+  reconciliação final batendo. Suíte de integração da Story 2.1 (3 cenários
+  de concorrência) re-executada sem alteração como teste de regressão do
+  writer generalizado — todos continuam verdes.
 - **Story 4.2 (reconciliação)** — `POST /wallets/:walletId/reconciliation`
   soma o ledger inteiro da wallet a partir de `"0.00"` e compara com o
   saldo materializado; nunca corrige, só reporta divergência.
 
 ### Não implementado por corte consciente de escopo (prazo)
-- **Story 2.2 (WIN/LOSS) e Story 2.3 (REFUND/ROLLBACK)** — desenho e regras
-  já completamente especificados no planejamento interno da entrega
-  (incluindo a constraint `UNIQUE(reference_transaction_id) WHERE kind IN
-  (...) AND status IN (...)` sem `kind` no índice, os dois conjuntos de
-  referência distintos por operação, e os códigos `REFERENCE_WRONG_KIND` /
-  `REFERENCE_SCOPE_MISMATCH` / `REVERSAL_WOULD_GO_NEGATIVE`). Reusariam o
-  mesmo mecanismo de lock pessimista + idempotência da Story 2.1 — a
+- **Story 2.3 (REFUND/ROLLBACK)** — desenho e regras já completamente
+  especificados no planejamento interno da entrega (incluindo a
+  constraint `UNIQUE(reference_transaction_id) WHERE kind IN (...) AND
+  status IN (...)` sem `kind` no índice, os dois conjuntos de referência
+  distintos por operação, e os códigos `REFERENCE_WRONG_KIND` /
+  `REVERSAL_WOULD_GO_NEGATIVE` — distintos de `REFERENCE_SCOPE_MISMATCH`,
+  que a Story 2.2 já usa com um significado mais amplo). Reusaria o mesmo
+  mecanismo de lock pessimista + idempotência das Stories 2.1/2.2 — a
   decisão foi não codificar sob pressão de tempo para não introduzir um
-  bug financeiro não revisado com o mesmo rigor das stories já entregues.
+  bug financeiro não revisado com o mesmo rigor das stories já entregues;
+  é também a mais arriscada das pendentes (nova migration para o índice
+  único de reversão, `PENDING_REFERENCE` síncrono, dois conjuntos de
+  validação de referência).
 - **Epic 3 inteiro** — consumer SQS (inbox + classificação de falha
   transitória/negócio/DLQ), publisher da outbox (`FOR UPDATE SKIP LOCKED`),
   worker de reprocessamento de referências `PENDING_REFERENCE`. Não
@@ -223,9 +245,10 @@ frontend.
   OpenTelemetry, métricas ou dashboards.
 
 ### Ordem de implementação se houvesse mais tempo
-1. Story 2.2 (WIN/LOSS) e Story 2.3 (REFUND/ROLLBACK) — risco incremental
-   baixo sobre a Story 2.1, mesmo mecanismo de lock + idempotência já
-   provado.
+1. Story 2.3 (REFUND/ROLLBACK) — risco incremental sobre as Stories
+   2.1/2.2, mesmo mecanismo de lock + idempotência já provado, mas exige
+   uma migration nova (índice único de reversão) e o caminho síncrono de
+   `PENDING_REFERENCE`.
 2. Publisher da outbox + consumer SQS (Epic 3) — sem isso, nenhum evento
    sai do banco, e a entrega segue apenas HTTP síncrono.
 3. Worker de reprocessamento de referências `PENDING_REFERENCE` (poll +

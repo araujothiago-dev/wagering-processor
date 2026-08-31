@@ -8,7 +8,7 @@ import { InsufficientBalanceError } from '../../wallet/domain/errors';
 import { WalletLedgerEntry } from '../../wallet/domain/wallet-ledger-entry';
 import { WagerTransaction } from '../domain/wager-transaction';
 import { hashPayload } from './payload-hash';
-import type { SubmitBetDecide, SubmitBetTransactionalWriter } from './ports';
+import type { SubmitWagerDecide, SubmitWagerTransactionalWriter } from './ports';
 
 const KIND = 'BET' as const;
 
@@ -33,7 +33,7 @@ export interface SubmitBetResult {
 }
 
 export class SubmitBetUseCase {
-  constructor(private readonly writer: SubmitBetTransactionalWriter) {}
+  constructor(private readonly writer: SubmitWagerTransactionalWriter) {}
 
   async execute(command: SubmitBetCommand): Promise<SubmitBetResult> {
     // Parsed once, outside the locked transaction: a malformed amount/currency fails fast
@@ -52,7 +52,7 @@ export class SubmitBetUseCase {
     });
     const transactionId = randomUUID();
 
-    const decide: SubmitBetDecide = (lockedWallet) => {
+    const decide: SubmitWagerDecide = (lockedWallet) => {
       try {
         const debitedWallet = lockedWallet.applyDebit(money);
         const ledgerEntry = WalletLedgerEntry.debit({

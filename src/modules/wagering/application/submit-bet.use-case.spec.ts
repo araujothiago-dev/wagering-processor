@@ -5,7 +5,7 @@ import { Wallet } from '../../wallet/domain/wallet';
 import { IdempotencyKeyConflictError } from '../domain/errors';
 import { WagerTransaction } from '../domain/wager-transaction';
 import { SubmitBetUseCase, type SubmitBetCommand } from './submit-bet.use-case';
-import type { SubmitBetDecide, SubmitBetOutcome, SubmitBetTransactionalWriter } from './ports';
+import type { SubmitWagerDecide, SubmitWagerOutcome, SubmitWagerTransactionalWriter } from './ports';
 
 const VALID_COMMAND: SubmitBetCommand = {
   providerId: 'provider-a',
@@ -30,7 +30,7 @@ function buildWallet(balance: string, currency = 'BRL'): Wallet {
 }
 
 function buildWriterInvokingDecide(wallet: Wallet) {
-  const submit = mock(async (_walletId: string, decide: SubmitBetDecide): Promise<SubmitBetOutcome> => {
+  const submit = mock(async (_walletId: string, decide: SubmitWagerDecide): Promise<SubmitWagerOutcome> => {
     const decision = decide(wallet);
 
     if (decision.transaction.status === 'PROCESSED') {
@@ -40,19 +40,19 @@ function buildWriterInvokingDecide(wallet: Wallet) {
     return { transaction: decision.transaction, idempotentReplay: false };
   });
 
-  const writer: SubmitBetTransactionalWriter = { submit };
+  const writer: SubmitWagerTransactionalWriter = { submit };
   return { writer, submit };
 }
 
-function buildWriterReturning(outcome: SubmitBetOutcome) {
+function buildWriterReturning(outcome: SubmitWagerOutcome) {
   const submit = mock(() => Promise.resolve(outcome));
-  const writer: SubmitBetTransactionalWriter = { submit };
+  const writer: SubmitWagerTransactionalWriter = { submit };
   return { writer, submit };
 }
 
 function buildWriterRejectingWith(error: Error) {
   const submit = mock(() => Promise.reject(error));
-  const writer: SubmitBetTransactionalWriter = { submit };
+  const writer: SubmitWagerTransactionalWriter = { submit };
   return { writer, submit };
 }
 

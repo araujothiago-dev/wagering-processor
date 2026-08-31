@@ -32,10 +32,19 @@ interface WagerTransactionBaseProps {
   payloadHash: string;
 }
 
-export type ProcessedWagerTransactionProps = WagerTransactionBaseProps;
+export interface ProcessedWagerTransactionProps extends WagerTransactionBaseProps {
+  // Story 2.2 — set when a WIN successfully resolves an optional reference to the BET of the
+  // same round (README §6.3's `referenceTransactionId`, the *internal* id — never the
+  // provider's `referenceExternalTransactionId`). `undefined` for BET/LOSS.
+  referenceTransactionId?: string;
+}
 
 export interface RejectedWagerTransactionProps extends WagerTransactionBaseProps {
   failureCode: string;
+  // Story 2.2 — set for a REFERENCE_SCOPE_MISMATCH rejection when the resolved row exists but
+  // doesn't qualify (found, out of scope); left undefined when nothing resolved at all (the
+  // reference was never submitted) or for any other failureCode (e.g. INSUFFICIENT_BALANCE).
+  referenceTransactionId?: string;
 }
 
 export interface RehydrateWagerTransactionProps extends WagerTransactionBaseProps {
@@ -80,6 +89,7 @@ export class WagerTransaction {
       props.idempotencyKey,
       props.payloadHash,
       undefined,
+      props.referenceTransactionId,
     );
   }
 
@@ -98,6 +108,7 @@ export class WagerTransaction {
       props.idempotencyKey,
       props.payloadHash,
       props.failureCode,
+      props.referenceTransactionId,
     );
   }
 
@@ -124,5 +135,12 @@ export class WagerTransaction {
   /** True when `payloadHash` matches — the idempotency-key replay-vs-conflict decision. */
   matchesPayload(payloadHash: string): boolean {
     return this.payloadHash === payloadHash;
+  }
+
+  // Story 2.2 (README §6.3) — false only for `LOSS`: every other kind either moves the balance
+  // (BET/WIN/REFUND/ROLLBACK) or never reaches PROCESSED (a REJECTED/FAILED row never touches
+  // the ledger either, but that's `status`, not `kind` — callers already branch on `status` first).
+  affectsBalance(): boolean {
+    return this.kind !== 'LOSS';
   }
 }

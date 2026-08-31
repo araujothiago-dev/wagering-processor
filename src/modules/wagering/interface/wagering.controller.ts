@@ -13,6 +13,8 @@
 import { Controller, Body, Get, Headers, HttpCode, HttpStatus, Param, Post } from '@nestjs/common';
 import type { SubmitBetCommand } from '../application/submit-bet.use-case';
 import { SubmitBetUseCase } from '../application/submit-bet.use-case';
+import type { SubmitWinLossCommand, SubmitWinLossKind } from '../application/submit-win-loss.use-case';
+import { SubmitWinLossUseCase } from '../application/submit-win-loss.use-case';
 import { GetWagerTransactionUseCase } from '../application/get-wager-transaction.use-case';
 import type { WagerTransaction } from '../domain/wager-transaction';
 
@@ -31,7 +33,8 @@ export class WageringRequestValidationError extends Error {
   }
 }
 
-const SUPPORTED_KIND = 'BET';
+// Story 2.3 (REFUND/ROLLBACK) adds two more kinds here — not yet supported.
+const SUPPORTED_KINDS = ['BET', 'WIN', 'LOSS'] as const;
 const REQUIRED_STRING_FIELDS = [
   'providerId',
   'externalTransactionId',
@@ -44,7 +47,7 @@ const REQUIRED_STRING_FIELDS = [
   'currency',
 ] as const;
 
-interface SubmitBetResponseBody {
+interface SubmitWagerResponseBody {
   transactionId: string;
   status: string;
   balance: string;
@@ -65,6 +68,7 @@ interface WagerTransactionResponseBody {
 export class WageringController {
   constructor(
     private readonly submitBetUseCase: SubmitBetUseCase,
+    private readonly submitWinLossUseCase: SubmitWinLossUseCase,
     private readonly getWagerTransactionUseCase: GetWagerTransactionUseCase,
   ) {}
 
@@ -73,7 +77,7 @@ export class WageringController {
   async submit(
     @Body() body: unknown,
     @Headers('idempotency-key') idempotencyKey: string | undefined,
-  ): Promise<SubmitBetResponseBody> {
+  ): Promise<SubmitWagerResponseBody> {
     if (idempotencyKey === undefined || idempotencyKey.length === 0) {
       throw new WageringRequestValidationError(
         'Header "Idempotency-Key" is required.',
@@ -81,8 +85,13 @@ export class WageringController {
       );
     }
 
-    const command = this.parseSubmitBetBody(body, idempotencyKey);
-    const result = await this.submitBetUseCase.execute(command);
+    const fields = this.parseFields(body);
+    const kind = this.parseKind(fields);
+
+    const result =
+      kind === 'BET'
+        ? await this.submitBetUseCase.execute(this.toSubmitBetCommand(fields, idempotencyKey))
+        : await this.submitWinLossUseCase.execute(this.toSubmitWinLossCommand(fields, kind, idempotencyKey));
 
     return {
       transactionId: result.transactionId,
@@ -122,7 +131,7 @@ export class WageringController {
     };
   }
 
-  private parseSubmitBetBody(body: unknown, idempotencyKey: string): SubmitBetCommand {
+  private parseFields(body: unknown): Record<string, unknown> {
     if (typeof body !== 'object' || body === null) {
       throw new WageringRequestValidationError('Request body must be a JSON object.');
     }
@@ -136,14 +145,23 @@ export class WageringController {
       }
     }
 
+    return fields;
+  }
+
+  private parseKind(fields: Record<string, unknown>): (typeof SUPPORTED_KINDS)[number] {
     const kind = fields.kind as string;
-    if (kind !== SUPPORTED_KIND) {
+
+    if (!(SUPPORTED_KINDS as readonly string[]).includes(kind)) {
       throw new WageringRequestValidationError(
-        `"kind" must be '${SUPPORTED_KIND}', got '${kind}'.`,
+        `"kind" must be one of [${SUPPORTED_KINDS.join(', ')}], got '${kind}'.`,
         'VALIDATION_UNSUPPORTED_KIND',
       );
     }
 
+    return kind as (typeof SUPPORTED_KINDS)[number];
+  }
+
+  private toSubmitBetCommand(fields: Record<string, unknown>, idempotencyKey: string): SubmitBetCommand {
     return {
       providerId: fields.providerId as string,
       externalTransactionId: fields.externalTransactionId as string,
@@ -154,6 +172,33 @@ export class WageringController {
       amount: fields.amount as string,
       currency: fields.currency as string,
       idempotencyKey,
+    };
+  }
+
+  // `referenceExternalTransactionId` is optional and WIN-only (`SubmitWinLossUseCase` itself
+  // ignores it for LOSS) — validated here only when present, never required.
+  private toSubmitWinLossCommand(
+    fields: Record<string, unknown>,
+    kind: SubmitWinLossKind,
+    idempotencyKey: string,
+  ): SubmitWinLossCommand {
+    const referenceExternalTransactionId = fields.referenceExternalTransactionId;
+    if (referenceExternalTransactionId !== undefined && typeof referenceExternalTransactionId !== 'string') {
+      throw new WageringRequestValidationError('"referenceExternalTransactionId" must be a string when provided.');
+    }
+
+    return {
+      providerId: fields.providerId as string,
+      externalTransactionId: fields.externalTransactionId as string,
+      playerId: fields.playerId as string,
+      walletId: fields.walletId as string,
+      roundId: fields.roundId as string,
+      gameId: fields.gameId as string,
+      kind,
+      amount: fields.amount as string,
+      currency: fields.currency as string,
+      idempotencyKey,
+      referenceExternalTransactionId,
     };
   }
 }

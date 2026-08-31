@@ -14,6 +14,24 @@ export class IdempotencyKeyConflictError extends Error {
   }
 }
 
+// Story 2.2 — thrown when a WIN's optional `referenceExternalTransactionId` doesn't resolve to
+// a BET belonging to the same provider/player/wallet/currency/round (README §7 rule 2), or
+// resolves to something that isn't a PROCESSED BET at all. One code covers "not found", "wrong
+// kind", and "wrong scope" for this story — Story 2.3 (REFUND/ROLLBACK) is the one that splits
+// those into distinct codes (`REFERENCE_WRONG_KIND` vs `REFERENCE_SCOPE_MISMATCH`), since only
+// there does the epics spec require telling them apart.
+export class ReferenceScopeMismatchError extends Error {
+  readonly code = 'REFERENCE_SCOPE_MISMATCH' as const;
+
+  constructor(referenceExternalTransactionId: string) {
+    super(
+      `Reference '${referenceExternalTransactionId}' does not resolve to a PROCESSED BET in the ` +
+        'same provider/player/wallet/currency/round.',
+    );
+    this.name = 'ReferenceScopeMismatchError';
+  }
+}
+
 // Story 2.4 — thrown for both query paths (`GET /wagering/transactions/:id` and
 // `GET /providers/:providerId/wagering/transactions/:externalId`) when no row matches.
 export class TransactionNotFoundError extends Error {
